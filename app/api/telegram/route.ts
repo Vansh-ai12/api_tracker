@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
   {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
-  },
+  }
 );
 
 function generateAlias(length = 6) {
@@ -18,7 +18,9 @@ function generateAlias(length = 6) {
   let alias = "";
 
   for (let i = 0; i < length; i++) {
-    alias += characters.charAt(Math.floor(Math.random() * characters.length));
+    alias += characters.charAt(
+      Math.floor(Math.random() * characters.length)
+    );
   }
 
   return alias;
@@ -48,10 +50,12 @@ async function generateUniqueAlias() {
 
 export async function POST(request: Request) {
   try {
-    // Telegram sends the entire update as JSON
     const update = await request.json();
 
-    console.log("Telegram update:", JSON.stringify(update));
+    console.log(
+      "Telegram webhook update:",
+      JSON.stringify(update)
+    );
 
     const message = update?.message;
 
@@ -67,17 +71,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // For now, only handle /start
+    // For now, we only handle /start
     if (text !== "/start") {
       return NextResponse.json({ ok: true });
     }
 
-    // Check if this Telegram user already exists
-    const { data: existingUser, error: lookupError } = await supabase
-      .from("users")
-      .select("forwarding_alias")
-      .eq("telegram_chat_id", chatId)
-      .maybeSingle();
+    /*
+     * Check if this Telegram user already exists.
+     * This prevents creating a new alias every time
+     * the user sends /start.
+     */
+    const { data: existingUser, error: lookupError } =
+      await supabase
+        .from("users")
+        .select("forwarding_alias")
+        .eq("telegram_chat_id", chatId)
+        .maybeSingle();
 
     if (lookupError) {
       console.error("Supabase lookup error:", lookupError);
@@ -87,23 +96,25 @@ export async function POST(request: Request) {
           ok: false,
           error: "Database lookup failed",
         },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
     let alias: string;
 
     if (existingUser) {
-      // User already has an alias
+      // User already exists
       alias = existingUser.forwarding_alias;
     } else {
-      // Create a new alias
+      // Generate a new unique alias
       alias = await generateUniqueAlias();
 
-      const { error: insertError } = await supabase.from("users").insert({
-        telegram_chat_id: chatId,
-        forwarding_alias: alias,
-      });
+      const { error: insertError } = await supabase
+        .from("users")
+        .insert({
+          telegram_chat_id: chatId,
+          forwarding_alias: alias,
+        });
 
       if (insertError) {
         console.error("Supabase insert error:", insertError);
@@ -113,12 +124,13 @@ export async function POST(request: Request) {
             ok: false,
             error: "Could not create user",
           },
-          { status: 500 },
+          { status: 500 }
         );
       }
     }
 
-    const domain = process.env.UNSUB_EMAIL_DOMAIN || "unsub.app";
+    const domain =
+      process.env.UNSUB_EMAIL_DOMAIN || "unsub.app";
 
     const forwardingEmail = `${alias}@${domain}`;
 
@@ -132,11 +144,13 @@ export async function POST(request: Request) {
           ok: false,
           error: "Telegram token is not configured",
         },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
-    // Send the forwarding address back to the user
+    /*
+     * Send the forwarding address back to the user
+     */
     const telegramResponse = await fetch(
       `https://api.telegram.org/bot${token}/sendMessage`,
       {
@@ -153,21 +167,23 @@ export async function POST(request: Request) {
             `Forward your subscription receipts to this address ` +
             `and I'll track them for you.`,
         }),
-      },
+      }
     );
 
     const telegramData = await telegramResponse.json();
 
     if (!telegramResponse.ok || !telegramData.ok) {
-      console.error("Telegram sendMessage error:", telegramData);
+      console.error(
+        "Telegram sendMessage error:",
+        telegramData
+      );
 
       return NextResponse.json(
         {
           ok: false,
           error: telegramData.description || "Telegram API error",
-          telegramError: telegramData,
         },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
@@ -184,7 +200,7 @@ export async function POST(request: Request) {
         ok: false,
         error: "Internal server error",
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
