@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Bell body  open-bottom U silhouette, not a generic filled bell -->
+  <path d="M10.3 2.1a1.94 1.94 0 0 1 3.4 0"/>
+  <path d="M5 14.5A7 7 0 0 1 19 14.5"/>
+  <path d="M8 18h8"/>
+  <!-- Nudge arc: pre-renewal ping radiating outward -->
+  <path d="M19.5 6.5c1.8 1.2 3 3.2 3 5.5"/>
+  <path d="M21.5 4.5L19.5 6.5l-1.5-1.5"/>
+  <!-- Check badge instead of a mute-slash  "you were reminded, you decided" -->
+  <circle cx="17.5" cy="17.5" r="3"/>
+  <path d="M16.2 17.5l.9.9 1.9-1.9"/>
+</svg>
