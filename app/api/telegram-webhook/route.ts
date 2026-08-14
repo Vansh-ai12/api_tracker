@@ -53,6 +53,70 @@ export async function POST(request: Request) {
 
     console.log("Telegram update:", JSON.stringify(update));
 
+    // Handle button clicks
+    if (update?.callback_query) {
+      const callbackQuery = update.callback_query;
+
+      const chatId = callbackQuery.message.chat.id;
+      const action = callbackQuery.data;
+
+      if (action === "connect_gmail") {
+        await supabase
+          .from("users")
+          .update({
+            tracking_method: "gmail",
+          })
+          .eq("telegram_chat_id", chatId);
+
+        await fetch(
+          `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text:
+                `🔗 Gmail connection selected.\n\n` +
+                `Next, we'll connect your email securely.\n\n` +
+                `No subscription emails will need manual forwarding.`,
+            }),
+          },
+        );
+      }
+
+      if (action === "private_forwarding") {
+        await supabase
+          .from("users")
+          .update({
+            tracking_method: "forwarding",
+          })
+          .eq("telegram_chat_id", chatId);
+
+        await fetch(
+          `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text:
+                `🔒 Privacy mode selected.\n\n` +
+                `Your Unsub address will receive subscription emails:\n\n` +
+                `📧 We'll guide you through the one-time forwarding setup.`,
+            }),
+          },
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+      });
+    }
+
     const message = update?.message;
 
     // Ignore updates that don't contain a message
@@ -120,7 +184,7 @@ export async function POST(request: Request) {
 
     const domain = process.env.UNSUB_EMAIL_DOMAIN || "unsub.app";
 
-    const forwardingEmail = `${alias}@${domain}`;
+    const unsubEmail = `${alias}@${domain}`;
 
     const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -146,12 +210,29 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           chat_id: chatId,
+
           text:
             `👋 Welcome to Unsub!\n\n` +
-            `Your personal forwarding address is:\n\n` +
-            `📧 ${forwardingEmail}\n\n` +
-            `Forward your subscription receipts to this address ` +
-            `and I'll track them for you.`,
+            `Your personal Unsub address is:\n\n` +
+            `📧 ${unsubEmail}\n\n` +
+            `Choose how you want Unsub to track your subscriptions:`,
+
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "🔗 Connect Gmail",
+                  callback_data: "connect_gmail",
+                },
+              ],
+              [
+                {
+                  text: "🔒 Keep Inbox Private",
+                  callback_data: "private_forwarding",
+                },
+              ],
+            ],
+          },
         }),
       },
     );
@@ -174,7 +255,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       alias,
-      forwardingEmail,
+      unsubEmail,
     });
   } catch (error) {
     console.error("Webhook error:", error);
