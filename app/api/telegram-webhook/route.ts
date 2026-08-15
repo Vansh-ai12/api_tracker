@@ -46,6 +46,38 @@ async function generateUniqueAlias() {
   throw new Error("Could not generate a unique alias");
 }
 
+
+async function disableButtons(chatId: number, messageId: number) {
+  const response = await fetch(
+    `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [],
+        },
+      }),
+    },
+  );
+
+  const result = await response.json();
+
+  console.log("Disable buttons result:", result);
+
+  if (!response.ok || !result.ok) {
+    throw new Error(
+      `Failed to disable Telegram buttons: ${
+        result.description || "Unknown Telegram error"
+      }`,
+    );
+  }
+}
+
 export async function POST(request: Request) {
   try {
     // Telegram sends the entire update as JSON
@@ -58,7 +90,121 @@ export async function POST(request: Request) {
       const callbackQuery = update.callback_query;
 
       const chatId = callbackQuery.message.chat.id;
+      const messageId = callbackQuery.message.message_id;
       const action = callbackQuery.data;
+
+      // Acknowledge the button click
+      await fetch(
+        `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            callback_query_id: callbackQuery.id,
+          }),
+        },
+      );
+
+      // Disable all buttons immediately
+      await disableButtons(chatId, messageId);
+
+      const { data: telegramUser, error: userError } = await supabase
+        .from("users")
+        .select("id")
+        .eq("telegram_chat_id", chatId)
+        .single();
+
+      if (userError) {
+        console.error("Telegram user lookup failed:", userError);
+
+        return NextResponse.json({
+          ok: false,
+          error: "User lookup failed",
+        });
+      }
+
+      if (!telegramUser) {
+        return NextResponse.json({
+          ok: false,
+          error: "User not found",
+        });
+      }
+
+      const userId = telegramUser.id;
+
+      if (action === "still_using") {
+        const { data: subscription } = await supabase
+          .from("subscriptions")
+          .select("id,user_id")
+          .eq("user_id", userId)
+          .eq("status", "active")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (subscription) {
+          await supabase.from("usage_reports").insert({
+            subscription_id: subscription.id,
+            user_id: subscription.user_id,
+            source: "self_report",
+            used: true,
+          });
+        }
+
+        await fetch(
+          `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `✅ Great!\n\n` + `We'll keep tracking this subscription.`,
+            }),
+          },
+        );
+      }
+      if (action === "cancel_subscription") {
+        await supabase
+          .from("subscriptions")
+          .update({
+            status: "cancelled",
+          })
+          .eq("user_id", userId);
+
+        await fetch(
+          `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `❌ Subscription marked as cancelled.`,
+            }),
+          },
+        );
+      }
+
+      if (action === "remind_later") {
+        await fetch(
+          `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `⏰ Okay, I'll remind you later.`,
+            }),
+          },
+        );
+      }
 
       if (action === "connect_gmail") {
         await supabase
