@@ -155,6 +155,13 @@ export async function POST(request: Request) {
             source: "self_report",
             used: true,
           });
+
+          await supabase
+            .from("subscriptions")
+            .update({
+              last_nudged_at: null,
+            })
+            .eq("id", subscription.id);
         }
 
         await fetch(
@@ -171,7 +178,7 @@ export async function POST(request: Request) {
           },
         );
       }
-      if (action === "cancel_subscription") {
+      if (action === "mark_cancelled") {
         if (!subscriptionId) {
           return NextResponse.json({
             ok: false,
@@ -205,7 +212,9 @@ export async function POST(request: Request) {
             },
             body: JSON.stringify({
               chat_id: chatId,
-              text: `❌ Subscription marked as cancelled.`,
+              text:
+                `🗑️ Subscription removed from tracking.\n\n` +
+                `Unsub will stop reminding you about this subscription.`,
             }),
           },
         );

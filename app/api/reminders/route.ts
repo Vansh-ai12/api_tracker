@@ -36,14 +36,14 @@ async function sendTelegramMessage(
           inline_keyboard: [
             [
               {
-                text: "✅ Still using",
+                text: "✅ Keep tracking",
                 callback_data: `still_using:${subscriptionId}`,
               },
             ],
             [
               {
-                text: "❌ Cancel subscription",
-                callback_data: `cancel_subscription:${subscriptionId}`,
+                text: "🗑️ I cancelled it",
+                callback_data: `mark_cancelled:${subscriptionId}`,
               },
             ],
             [
@@ -116,7 +116,7 @@ users(
           `${subscription.service_name}\n` +
           `₹${subscription.amount} ${subscription.currency}\n\n` +
           `Renews on ${subscription.renewal_date}\n\n` +
-          `Are you still using it?`,
+          `What would you like to do with this subscription?`,
 
         subscription.id,
       );
