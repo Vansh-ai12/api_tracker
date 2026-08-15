@@ -46,7 +46,6 @@ async function generateUniqueAlias() {
   throw new Error("Could not generate a unique alias");
 }
 
-
 async function disableButtons(chatId: number, messageId: number) {
   const response = await fetch(
     `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup`,
@@ -91,7 +90,7 @@ export async function POST(request: Request) {
 
       const chatId = callbackQuery.message.chat.id;
       const messageId = callbackQuery.message.message_id;
-      const action = callbackQuery.data;
+      const [action, subscriptionId] = callbackQuery.data.split(":");
 
       // Acknowledge the button click
       await fetch(
@@ -135,13 +134,18 @@ export async function POST(request: Request) {
       const userId = telegramUser.id;
 
       if (action === "still_using") {
+        if (!subscriptionId) {
+          return NextResponse.json({
+            ok: false,
+            error: "Subscription ID missing",
+          });
+        }
+
         const { data: subscription } = await supabase
           .from("subscriptions")
           .select("id,user_id")
+          .eq("id", subscriptionId)
           .eq("user_id", userId)
-          .eq("status", "active")
-          .order("created_at", { ascending: false })
-          .limit(1)
           .single();
 
         if (subscription) {
@@ -168,12 +172,29 @@ export async function POST(request: Request) {
         );
       }
       if (action === "cancel_subscription") {
-        await supabase
+        if (!subscriptionId) {
+          return NextResponse.json({
+            ok: false,
+            error: "Subscription ID missing",
+          });
+        }
+
+        const { error: cancelError } = await supabase
           .from("subscriptions")
           .update({
             status: "cancelled",
           })
+          .eq("id", subscriptionId)
           .eq("user_id", userId);
+
+        if (cancelError) {
+          console.error("Subscription cancellation error:", cancelError);
+
+          return NextResponse.json({
+            ok: false,
+            error: "Could not cancel subscription",
+          });
+        }
 
         await fetch(
           `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,

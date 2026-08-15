@@ -12,7 +12,11 @@ const supabase = createClient(
   },
 );
 
-async function sendTelegramMessage(chatId: number, message: string) {
+async function sendTelegramMessage(
+  chatId: number,
+  message: string,
+  subscriptionId: string,
+) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
 
   const response = await fetch(
@@ -33,19 +37,19 @@ async function sendTelegramMessage(chatId: number, message: string) {
             [
               {
                 text: "✅ Still using",
-                callback_data: "still_using",
+                callback_data: `still_using:${subscriptionId}`,
               },
             ],
             [
               {
                 text: "❌ Cancel subscription",
-                callback_data: "cancel_subscription",
+                callback_data: `cancel_subscription:${subscriptionId}`,
               },
             ],
             [
               {
                 text: "⏰ Remind later",
-                callback_data: "remind_later",
+                callback_data: `remind_later:${subscriptionId}`,
               },
             ],
           ],
@@ -113,6 +117,8 @@ users(
           `₹${subscription.amount} ${subscription.currency}\n\n` +
           `Renews on ${subscription.renewal_date}\n\n` +
           `Are you still using it?`,
+
+        subscription.id,
       );
 
       await supabase
