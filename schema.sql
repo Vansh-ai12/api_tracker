@@ -9,8 +9,10 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- ==========================================
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    telegram_chat_id BIGINT UNIQUE NOT NULL,
+    auth_user_id UUID UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+    telegram_chat_id BIGINT UNIQUE,
     forwarding_alias TEXT UNIQUE NOT NULL, -- e.g. "u4f2a9"
+    plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'pro')),
     created_at TIMESTAMPTZ DEFAULT now()
 );
 

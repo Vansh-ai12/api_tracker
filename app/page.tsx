@@ -1,7 +1,15 @@
 import React from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Logo } from "@/components/logo";
+import { getSessionUserId } from "@/lib/session";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const isAuthenticated = Boolean(await getSessionUserId());
+  const primaryHref = isAuthenticated ? "/dashboard" : "/login?mode=signup";
+  const primaryLabel = isAuthenticated ? "Dashboard" : "Get started";
+
   return (
     <div className="flex flex-col min-h-screen bg-background selection:bg-mint-200 dark:selection:bg-emerald-900/50">
       {/* Background Gradient */}
@@ -9,25 +17,9 @@ export default function Home() {
 
       {/* Nav */}
       <nav className="sticky top-0 z-50 flex items-center justify-between px-6 py-4 backdrop-blur-md bg-white/50 dark:bg-gray-950/70 border-b border-gray-100/50 dark:border-gray-800/50">
-        <div className="flex items-center gap-2 font-bold text-xl tracking-tight">
-          <svg
-            className="w-6 h-6 text-emerald-500"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M10.3 2.1a1.94 1.94 0 0 1 3.4 0" />
-            <path d="M4 14.9A9 9 0 1 1 20 15" />
-            <path d="M8 20h8" />
-            <path d="M10 20v2" />
-            <path d="M14 20v2" />
-            <path d="M2 2l20 20" />
-          </svg>
-          Unsub
-        </div>
+        <a href="/" className="flex items-center gap-2">
+          <Logo />
+        </a>
         <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-600 dark:text-gray-400">
           <a
             href="#how-it-works"
@@ -41,11 +33,14 @@ export default function Home() {
         </div>
         <div className="flex items-center gap-3">
           <ThemeToggle />
+          {!isAuthenticated && <a href="/login?mode=login" className="hidden sm:inline-flex px-3 py-2 text-sm font-medium text-gray-600 hover:text-black dark:text-gray-300 dark:hover:text-white transition-colors">
+            Log in
+          </a>}
           <a
-            href="#"
+            href={primaryHref}
             className="px-5 py-2.5 bg-black text-white rounded-full text-sm font-medium hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 transition-colors"
           >
-            Get started
+            {primaryLabel}
           </a>
         </div>
       </nav>
@@ -53,7 +48,7 @@ export default function Home() {
       {/* Hero */}
       <main className="flex-1 flex flex-col items-center pt-24 pb-16 px-6">
         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-sm font-medium mb-8 border border-emerald-100 dark:border-emerald-900/50">
-          <span>✨ 7-day free trial · ₹99/month after</span>
+          <span>✨ 7-day free trial · ₹49/month after</span>
         </div>
 
         <h1 className="text-5xl md:text-7xl font-extrabold text-center tracking-tighter max-w-4xl text-[#0a0a0a] dark:text-gray-50 leading-[1.1] mb-6">
@@ -73,7 +68,7 @@ export default function Home() {
         </div>
         <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
           <a
-            href="#"
+            href={primaryHref}
             className="w-full sm:w-auto px-8 py-3.5 bg-black text-white rounded-full text-base font-semibold hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 transition-colors text-center shadow-sm"
           >
             Start tracking free
@@ -106,7 +101,7 @@ export default function Home() {
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                   <path d="M7 11V7a5 5 0 0110 0v4" />
                 </svg>
-                t.me/UnsubBot
+                t.me/UnsubGbot
               </div>
             </div>
           </div>
@@ -249,7 +244,6 @@ export default function Home() {
       </section>
 
       {/* Pricing */}
-      {/* Pricing */}
       <section
         id="pricing"
         className="py-24 px-6 w-full bg-background border-y border-gray-100 dark:border-gray-800"
@@ -274,12 +268,12 @@ export default function Home() {
 
             <div className="mb-2">
               <span className="text-5xl font-extrabold text-[#0a0a0a] dark:text-gray-50">
-                ₹99
+                ₹49
               </span>
               <span className="text-gray-500 dark:text-gray-400 font-medium">/month</span>
             </div>
 
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">≈ $1.03 USD/month</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">≈ $0.59 USD/month</p>
 
             <ul className="text-left space-y-4 mb-10">
               {[
@@ -313,7 +307,7 @@ export default function Home() {
             </ul>
 
             <a
-              href="#"
+            href={primaryHref}
               className="block w-full py-4 bg-black text-white rounded-full text-base font-semibold hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 transition-colors shadow-md hover:shadow-lg text-center"
             >
               Start 7-day free trial
@@ -328,25 +322,9 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="py-12 px-6 max-w-6xl mx-auto w-full flex flex-col md:flex-row items-center justify-between gap-6 border-t border-gray-100 dark:border-gray-800 mt-12">
-        <div className="flex items-center gap-2 font-bold text-xl tracking-tight text-gray-400 dark:text-gray-500">
-          <svg
-            className="w-6 h-6"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M10.3 2.1a1.94 1.94 0 0 1 3.4 0" />
-            <path d="M4 14.9A9 9 0 1 1 20 15" />
-            <path d="M8 20h8" />
-            <path d="M10 20v2" />
-            <path d="M14 20v2" />
-            <path d="M2 2l20 20" />
-          </svg>
-          Unsub
-        </div>
+        <a href="/" className="flex items-center gap-2">
+          <Logo />
+        </a>
 
         <div className="text-sm text-gray-500 dark:text-gray-400 font-medium">
           © 2026 Unsub. All rights reserved.

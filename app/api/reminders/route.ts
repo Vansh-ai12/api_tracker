@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { sendPushToUser } from "@/lib/push";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -79,7 +80,8 @@ export async function GET() {
         `
 *,
 users(
- telegram_chat_id
+ telegram_chat_id,
+ plan
 )
 `,
       )
@@ -87,40 +89,64 @@ users(
       .gte("renewal_date", todayString)
       .lte("renewal_date", futureString)
       .is("last_nudged_at", null);
+
     if (error) {
       console.error(error);
-
-      return NextResponse.json(
-        {
-          error: "Database error",
-        },
-        {
-          status: 500,
-        },
-      );
+      return NextResponse.json({ error: "Database error" }, { status: 500 });
     }
 
-    if (!subscriptions || subscriptions.length === 0) {
+    // REMINDER FEATURE GATE: Only users on the Pro plan receive automated renewal nudges
+    const proSubscriptions = (subscriptions || []).filter(
+      (sub: any) => sub.users?.plan === "pro",
+    );
+
+    if (proSubscriptions.length === 0) {
       return NextResponse.json({
-        message: "No reminders today",
+        message: "No active Pro reminders due today",
       });
     }
 
-    for (const subscription of subscriptions) {
+    for (const subscription of proSubscriptions) {
       const chatId = subscription.users.telegram_chat_id;
 
-      await sendTelegramMessage(
-        chatId,
+      // Telegram is optional during account setup. Preserve the existing
+      // reminder flow for connected users, while allowing dashboard-first
+      // users to connect their bot chat before Telegram reminders begin.
+      if (typeof chatId === "number") {
+        await sendTelegramMessage(
+          chatId,
 
-        `🔔 Subscription Reminder\n\n` +
-          `${subscription.service_name}\n` +
-          `₹${subscription.amount} ${subscription.currency}\n\n` +
-          `Renews on ${subscription.renewal_date}\n\n` +
-          `What would you like to do with this subscription?`,
+          `🔔 Subscription Reminder\n\n` +
+            `${subscription.service_name}\n` +
+            `₹${subscription.amount} ${subscription.currency}\n\n` +
+            `Renews on ${subscription.renewal_date}\n\n` +
+            `What would you like to do with this subscription?`,
 
-        subscription.id,
-      );
+          subscription.id,
+        );
+      }
 
+      // --- Browser push notification (new, non-blocking) ---
+      // A push failure must never prevent the Telegram reminder or
+      // the last_nudged_at update from completing.
+      try {
+        await sendPushToUser(subscription.user_id, {
+          title: `🔔 ${subscription.service_name} renews in 3 days`,
+          body:
+            `${subscription.currency === "INR" ? "₹" : subscription.currency + " "}${subscription.amount ?? "—"} — ` +
+            `renewal on ${subscription.renewal_date ?? "unknown date"}. Open Unsub to manage.`,
+          url: "/dashboard",
+        });
+      } catch (pushErr) {
+        // Log and continue — never let a push error bubble up.
+        console.error(
+          "[reminders] Browser push failed for subscription",
+          subscription.id,
+          pushErr,
+        );
+      }
+
+      // --- Mark as nudged (unchanged) ---
       await supabase
         .from("subscriptions")
         .update({
