@@ -331,14 +331,11 @@ export default async function Home() {
         </div>
 
         <div className="flex gap-6 text-sm font-medium text-gray-500 dark:text-gray-400">
-          <a href="#" className="hover:text-black dark:hover:text-white transition-colors">
-            Privacy
+          <a href="/privacy" className="hover:text-black dark:hover:text-white transition-colors">
+            Privacy Policy
           </a>
-          <a href="#" className="hover:text-black dark:hover:text-white transition-colors">
-            Terms
-          </a>
-          <a href="#" className="hover:text-black dark:hover:text-white transition-colors">
-            GitHub
+          <a href="/terms" className="hover:text-black dark:hover:text-white transition-colors">
+            Terms of Service
           </a>
         </div>
       </footer>
