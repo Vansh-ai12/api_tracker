@@ -40,12 +40,7 @@ async function generateUniqueAlias() {
   throw new Error("Could not generate a unique alias");
 }
 
-/**
- * Safely looks up or auto-creates a user record by Telegram chat ID.
- * Resilient against missing schema columns.
- */
 async function getOrCreateTelegramUser(chatId: number, username?: string) {
-  // 1. Query guaranteed basic columns first
   const { data: basicUser } = await supabase
     .from("users")
     .select("id, forwarding_alias, telegram_chat_id, plan")
@@ -55,7 +50,6 @@ async function getOrCreateTelegramUser(chatId: number, username?: string) {
   let user = basicUser;
 
   if (!user) {
-    // Auto-create user if not found
     const alias = await generateUniqueAlias();
     const { data: newUser, error: insertErr } = await supabase
       .from("users")
@@ -72,7 +66,6 @@ async function getOrCreateTelegramUser(chatId: number, username?: string) {
     user = newUser || { id: "temp", forwarding_alias: alias, telegram_chat_id: chatId, plan: "free" };
   }
 
-  // 2. Fetch full extended columns if present
   const { data: extendedData } = await supabase
     .from("users")
     .select("*")
@@ -85,9 +78,6 @@ async function getOrCreateTelegramUser(chatId: number, username?: string) {
   };
 }
 
-/**
- * Safely updates user record, falling back gracefully if optional columns are absent.
- */
 async function safeUpdateUser(userId: string, payload: Record<string, any>) {
   const { error } = await supabase.from("users").update(payload).eq("id", userId);
   if (error) {
@@ -123,16 +113,25 @@ async function sendTelegramMessage(chatId: number, text: string, replyMarkup?: a
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
 
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: "Markdown",
-      reply_markup: replyMarkup,
-    }),
-  });
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+        reply_markup: replyMarkup,
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error(`[telegram-webhook] sendMessage failed (${res.status}):`, errBody);
+    }
+  } catch (err) {
+    console.error("[telegram-webhook] Fetch error:", err);
+  }
 }
 
 export async function POST(request: Request) {
@@ -154,17 +153,12 @@ export async function POST(request: Request) {
       const callbackData = callbackQuery.data;
       const [action, subscriptionId] = callbackData.split(":");
 
-      // Always acknowledge callback query immediately
+      // Acknowledge callback query immediately
       await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ callback_query_id: callbackQuery.id }),
       });
-
-      // Disable buttons on previous message except when starting long actions
-      if (action !== "scan_inbox") {
-        await disableButtons(chatId, messageId);
-      }
 
       // Safely look up or auto-create user record
       const user = await getOrCreateTelegramUser(chatId, callbackQuery.from?.username);
@@ -176,9 +170,9 @@ export async function POST(request: Request) {
         if (user.gmail_connected && user.gmail_email) {
           await sendTelegramMessage(
             chatId,
-            `✅ *Gmail is already connected\\!*\n\n` +
-            `Gmail account:\n\`${user.gmail_email}\`\n\n` +
-            `Unsub is active and analyzing your inbox\\. What would you like to do?`,
+            `✅ <b>Gmail is already connected!</b>\n\n` +
+            `Gmail account:\n<code>${user.gmail_email}</code>\n\n` +
+            `Unsub is active and analyzing your inbox. What would you like to do?`,
             {
               inline_keyboard: [
                 [
@@ -213,8 +207,8 @@ export async function POST(request: Request) {
 
         await sendTelegramMessage(
           chatId,
-          `🔗 *Connect your Gmail account securely*\n\n` +
-          `Click the button below to open Google's secure authorization page\\. Unsub requests *minimum read\\-only* access to identify subscription and receipt emails\\.`,
+          `🔗 <b>Connect your Gmail account securely</b>\n\n` +
+          `Click the button below to open Google's secure authorization page. Unsub requests <b>minimum read-only access</b> to identify subscription and receipt emails.`,
           {
             inline_keyboard: [
               [
@@ -231,11 +225,10 @@ export async function POST(request: Request) {
       // ACTION 2: KEEP INBOX PRIVATE (Private Forwarding Mode)
       if (action === "keep_inbox_private" || action === "private_forwarding") {
         if (user.gmail_connected) {
-          // If Gmail is already connected, ask explicit confirmation to disconnect first
           await sendTelegramMessage(
             chatId,
-            `⚠️ *Gmail is currently connected*\n\n` +
-            `Switching to Private Inbox mode will stop Gmail access and disconnect your connected account (\`${user.gmail_email}\`)\\.\n\n` +
+            `⚠️ <b>Gmail is currently connected</b>\n\n` +
+            `Switching to Private Inbox mode will stop Gmail access and disconnect your connected account (<code>${user.gmail_email}</code>).\n\n` +
             `Do you want to disconnect Gmail now?`,
             {
               inline_keyboard: [
@@ -247,17 +240,16 @@ export async function POST(request: Request) {
           return NextResponse.json({ ok: true });
         }
 
-        // Set tracking_mode to PRIVATE_EMAIL safely
         await safeUpdateUser(user.id, { tracking_mode: "PRIVATE_EMAIL", updated_at: new Date().toISOString() });
 
         logAuditEvent("private_mode_enabled", { userId: user.id, telegramChatId: chatId });
 
         await sendTelegramMessage(
           chatId,
-          `🔒 *Inbox privacy mode enabled.*\n\n` +
-          `Unsub will *not* access your Gmail inbox.\n\n` +
+          `🔒 <b>Inbox privacy mode enabled.</b>\n\n` +
+          `Unsub will <b>not</b> access your Gmail inbox.\n\n` +
           `Instead, forward subscription & receipt emails to your personal Unsub address:\n\n` +
-          `📧 \`${unsubEmail}\`\n\n` +
+          `📧 <code>${unsubEmail}</code>\n\n` +
           `Our AI will automatically parse the receipt details and ping you 3 days before renewal dates!`,
           {
             inline_keyboard: [
@@ -292,9 +284,9 @@ export async function POST(request: Request) {
 
         await sendTelegramMessage(
           chatId,
-          `🔒 *Gmail Disconnected & Private Inbox Enabled*\n\n` +
+          `🔒 <b>Gmail Disconnected & Private Inbox Enabled</b>\n\n` +
           `Your Gmail credentials have been completely erased. Unsub no longer has access to your Gmail.\n\n` +
-          `Forward your receipts to: \`${unsubEmail}\``,
+          `Forward your receipts to: <code>${unsubEmail}</code>`,
           {
             inline_keyboard: [
               [{ text: "📧 How to Forward Emails", callback_data: "how_to_forward" }],
@@ -307,7 +299,7 @@ export async function POST(request: Request) {
       if (action === "keep_gmail_connected") {
         await sendTelegramMessage(
           chatId,
-          `🟢 *Gmail stays connected\\!*\n\nYour Gmail integration remains active\\.`,
+          `🟢 <b>Gmail stays connected!</b>\n\nYour Gmail integration remains active.`,
           {
             inline_keyboard: [
               [
@@ -340,9 +332,9 @@ export async function POST(request: Request) {
 
         await sendTelegramMessage(
           chatId,
-          `❌ *Gmail disconnected successfully.*\n\n` +
+          `❌ <b>Gmail disconnected successfully.</b>\n\n` +
           `Unsub has revoked access and deleted your stored credentials. Tracking mode set to Private Inbox.\n\n` +
-          `Forward receipts to: \`${unsubEmail}\``
+          `Forward receipts to: <code>${unsubEmail}</code>`
         );
       }
 
@@ -358,9 +350,8 @@ export async function POST(request: Request) {
           return NextResponse.json({ ok: true });
         }
 
-        await sendTelegramMessage(chatId, "🔍 *Starting controlled inbox scan...*\n\nAnalyzing recent subscription & receipt emails.");
+        await sendTelegramMessage(chatId, "🔍 <b>Starting controlled inbox scan...</b>\n\nAnalyzing recent subscription & receipt emails.");
 
-        // Execute scan asynchronously
         (async () => {
           try {
             const res = await runGmailInboxScan(user.id);
@@ -369,7 +360,7 @@ export async function POST(request: Request) {
             } else {
               await sendTelegramMessage(
                 chatId,
-                `✅ *Inbox scan complete!*\n\n` +
+                `✅ <b>Inbox scan complete!</b>\n\n` +
                 `• Candidate emails scanned: ${res.scannedCount}\n` +
                 `• New subscriptions tracked: ${res.newSubscriptionsCount}\n` +
                 `• Subscriptions updated: ${res.updatedSubscriptionsCount}\n\n` +
@@ -399,8 +390,8 @@ export async function POST(request: Request) {
 
         await sendTelegramMessage(
           chatId,
-          `⚙️ *Gmail Connection Details*\n\n` +
-          `• Connected Account: \`${user.gmail_email || "Unknown"}\`\n` +
+          `⚙️ <b>Gmail Connection Details</b>\n\n` +
+          `• Connected Account: <code>${user.gmail_email || "Unknown"}</code>\n` +
           `• Status: 🟢 Active (Read-Only)\n` +
           `• Last Inbox Scan: ${lastScan}\n`,
           {
@@ -414,23 +405,23 @@ export async function POST(request: Request) {
         );
       }
 
-      // ACTION 6: HELPERS (How to forward, My Unsub address, Privacy settings)
+      // ACTION 6: HELPERS
       if (action === "how_to_forward") {
         await sendTelegramMessage(
           chatId,
-          `📖 *How to Forward Receipts to Unsub*\n\n` +
+          `📖 <b>How to Forward Receipts to Unsub</b>\n\n` +
           `1️⃣ Open any receipt email (Netflix, Spotify, ChatGPT, Canva, etc.)\n` +
-          `2️⃣ Click **Forward**\n` +
-          `3️⃣ Send to: \`${unsubEmail}\`\n\n` +
-          `💡 *Pro-tip:* Set up an automated auto-forwarding filter in Gmail/Outlook for emails matching 'receipt' or 'invoice'!`
+          `2️⃣ Click <b>Forward</b>\n` +
+          `3️⃣ Send to: <code>${unsubEmail}</code>\n\n` +
+          `💡 <i>Pro-tip:</i> Set up an automated auto-forwarding filter in Gmail/Outlook for emails matching 'receipt' or 'invoice'!`
         );
       }
 
       if (action === "my_unsub_address") {
         await sendTelegramMessage(
           chatId,
-          `📧 *Your Personal Unsub Forwarding Address*\n\n` +
-          `\`${unsubEmail}\`\n\n` +
+          `📧 <b>Your Personal Unsub Forwarding Address</b>\n\n` +
+          `<code>${unsubEmail}</code>\n\n` +
           `Tap the text above to copy your unique address!`,
           {
             inline_keyboard: [[{ text: "📧 How to Forward Emails", callback_data: "how_to_forward" }]],
@@ -441,9 +432,9 @@ export async function POST(request: Request) {
       if (action === "privacy_settings") {
         await sendTelegramMessage(
           chatId,
-          `🛡️ *Unsub Privacy Guarantee*\n\n` +
-          `• We request *minimum read-only access* for Gmail mode.\n` +
-          `• We *never* read personal emails, store full message bodies, or expose credentials.\n` +
+          `🛡️ <b>Unsub Privacy Guarantee</b>\n\n` +
+          `• We request <b>minimum read-only access</b> for Gmail mode.\n` +
+          `• We <b>never</b> read personal emails, store full message bodies, or expose credentials.\n` +
           `• You can disconnect Gmail at any time to purge credentials.\n` +
           `• Private Inbox mode uses zero Google permissions.`
         );
@@ -493,7 +484,6 @@ export async function POST(request: Request) {
     let browserLinked = false;
 
     if (linkMatch) {
-      // Pairing from web login page
       const { data: loginLink } = await supabase
         .from("telegram_login_links")
         .select("user_id")
@@ -519,12 +509,11 @@ export async function POST(request: Request) {
     const unsubEmail = `${alias}@${domain}`;
 
     if (user?.gmail_connected && user?.gmail_email) {
-      // User with connected Gmail
       await sendTelegramMessage(
         chatId,
         `Welcome back to Unsub! 👋\n\n` +
-        `🟢 *Gmail Connected:* \`${user.gmail_email}\`\n` +
-        `📧 *Personal Unsub Address:* \`${unsubEmail}\`\n\n` +
+        `🟢 <b>Gmail Connected:</b> <code>${user.gmail_email}</code>\n` +
+        `📧 <b>Personal Unsub Address:</b> <code>${unsubEmail}</code>\n\n` +
         `Choose how you want to manage your subscriptions:`,
         {
           inline_keyboard: [
@@ -537,12 +526,11 @@ export async function POST(request: Request) {
         }
       );
     } else {
-      // Onboarding welcome message with REAL Inline Keyboard Buttons
       await sendTelegramMessage(
         chatId,
-        `👋 Welcome to Unsub!\n\n` +
+        `👋 <b>Welcome to Unsub!</b>\n\n` +
         (browserLinked ? `✅ Telegram chat connected to your Unsub web session.\n\n` : "") +
-        `📧 Your personal Unsub address:\n\`${unsubEmail}\`\n\n` +
+        `📧 Your personal Unsub address:\n<code>${unsubEmail}</code>\n\n` +
         `Choose how you want Unsub to track your subscriptions:`,
         {
           inline_keyboard: [
