@@ -146,27 +146,36 @@ export async function GET(request: Request) {
     // 8. Notify user in Telegram
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (token && stateRecord.telegram_chat_id) {
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: stateRecord.telegram_chat_id,
-          text:
-            `✅ *Gmail connected successfully\\!*\n\n` +
-            `Unsub can now analyze your inbox for subscription emails\\.\n\n` +
-            `*Gmail account:*\n\`${escapeMarkdown(gmailEmail)}\``,
-          parse_mode: "MarkdownV2",
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: "📬 Scan Inbox", callback_data: "scan_inbox" },
-                { text: "⚙️ Gmail Settings", callback_data: "gmail_settings" },
+      try {
+        const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: stateRecord.telegram_chat_id,
+            text:
+              `✅ <b>Gmail connected successfully!</b>\n\n` +
+              `Unsub can now analyze your inbox for subscription emails.\n\n` +
+              `<b>Gmail account:</b>\n<code>${gmailEmail}</code>`,
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: "📬 Scan Inbox", callback_data: "scan_inbox" },
+                  { text: "⚙️ Gmail Settings", callback_data: "gmail_settings" },
+                ],
+                [{ text: "❌ Disconnect Gmail", callback_data: "disconnect_gmail" }],
               ],
-              [{ text: "❌ Disconnect Gmail", callback_data: "disconnect_gmail" }],
-            ],
-          },
-        }),
-      });
+            },
+          }),
+        });
+
+        if (!tgRes.ok) {
+          const tgErr = await tgRes.text();
+          console.error("[gmail-callback] Telegram notification failed:", tgErr);
+        }
+      } catch (tgError) {
+        console.error("[gmail-callback] Failed to send Telegram notification:", tgError);
+      }
     }
 
     // 9. Render success page
