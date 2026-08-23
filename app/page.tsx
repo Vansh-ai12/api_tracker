@@ -71,7 +71,7 @@ export default async function Home() {
             href={primaryHref}
             className="w-full sm:w-auto px-8 py-3.5 bg-black text-white rounded-full text-base font-semibold hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 transition-colors text-center shadow-sm"
           >
-            Start tracking free
+            {isAuthenticated ? "Go to Dashboard →" : "Start tracking free"}
           </a>
           <a
             href="#how-it-works"
@@ -307,10 +307,10 @@ export default async function Home() {
             </ul>
 
             <a
-            href={primaryHref}
+              href={primaryHref}
               className="block w-full py-4 bg-black text-white rounded-full text-base font-semibold hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 transition-colors shadow-md hover:shadow-lg text-center"
             >
-              Start 7-day free trial
+              {isAuthenticated ? "Go to Dashboard →" : "Start 7-day free trial"}
             </a>
 
             <p className="text-xs text-gray-400 dark:text-gray-500 text-center mt-4">

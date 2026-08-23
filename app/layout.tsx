@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AuthHashHandler } from "@/components/auth-hash-handler";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,7 +30,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <AuthHashHandler />
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

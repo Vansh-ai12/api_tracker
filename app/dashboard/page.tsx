@@ -4,6 +4,7 @@ import { PushNotificationButton } from "@/components/push-notification-button";
 import { Logo } from "@/components/logo";
 import { LogoutButton } from "@/components/logout-button";
 import { TelegramConnectCard } from "@/components/telegram-connect-card";
+import { GmailStatusCard } from "@/components/gmail-status-card";
 import { PlanCard } from "@/components/plan-card";
 import { redirect } from "next/navigation";
 
@@ -55,6 +56,24 @@ async function getTelegramConnection(userId: string): Promise<boolean> {
   }
 
   return data?.telegram_chat_id !== null && data?.telegram_chat_id !== undefined;
+}
+
+async function getUserGmailStatus(userId: string) {
+  const supabase = createServiceClient();
+  const { data } = await supabase
+    .from("users")
+    .select("tracking_mode, gmail_connected, gmail_email, gmail_last_scan_at, gmail_last_scan_status, forwarding_alias")
+    .eq("id", userId)
+    .maybeSingle();
+
+  return {
+    tracking_mode: (data?.tracking_mode as "GMAIL" | "PRIVATE_EMAIL") || "PRIVATE_EMAIL",
+    gmail_connected: !!data?.gmail_connected,
+    gmail_email: data?.gmail_email || null,
+    gmail_last_scan_at: data?.gmail_last_scan_at || null,
+    gmail_last_scan_status: data?.gmail_last_scan_status || "idle",
+    forwarding_alias: data?.forwarding_alias || "alias",
+  };
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -129,10 +148,11 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const [subscriptions, telegramConnected, profile] = await Promise.all([
+  const [subscriptions, telegramConnected, profile, gmailStatus] = await Promise.all([
     getSubscriptions(userId),
     getTelegramConnection(userId),
     getUserProfile(userId),
+    getUserGmailStatus(userId),
   ]);
 
   const isPro = profile.plan === "pro";
@@ -196,6 +216,9 @@ export default async function DashboardPage() {
 
         {/* Plan Upgrade / Status Banner */}
         <PlanCard initialPlan={profile.plan} />
+
+        {/* Live Gmail / Tracking Mode Status Banner */}
+        <GmailStatusCard initialStatus={gmailStatus} />
 
         {/* Analytics Highlights Grid (4 Cards) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
