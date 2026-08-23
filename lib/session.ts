@@ -47,38 +47,59 @@ export async function getSessionUserId(): Promise<string | null> {
 
 export type UserPlan = "free" | "pro";
 
+const PRO_ADMIN_EMAIL = "vj2754108@gmail.com";
+
 /**
  * Retrieves the subscription plan ('free' | 'pro') for a user.
- * Defaults to 'free' if column is not found or error occurs.
+ * Grants 'pro' if user has purchased Pro (plan === 'pro') or matches admin account vj2754108@gmail.com.
+ * Defaults to 'free' for all other un-upgraded users.
  */
 export async function getUserPlan(userId: string): Promise<UserPlan> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("users")
-    .select("plan")
+    .select("plan, gmail_email, auth_user_id")
     .eq("id", userId)
     .maybeSingle();
 
-  if (error || !data || !data.plan) {
+  if (error || !data) {
     return "free";
   }
 
-  return data.plan === "pro" ? "pro" : "free";
+  if (data.plan === "pro") return "pro";
+
+  // Check if connected Gmail email or Auth email is the admin email
+  if (data.gmail_email?.toLowerCase() === PRO_ADMIN_EMAIL.toLowerCase()) {
+    // Auto-update DB for consistency
+    await supabase.from("users").update({ plan: "pro" }).eq("id", userId);
+    return "pro";
+  }
+
+  if (data.auth_user_id) {
+    const { data: authUser } = await supabase.auth.admin.getUserById(data.auth_user_id);
+    if (authUser?.user?.email?.toLowerCase() === PRO_ADMIN_EMAIL.toLowerCase()) {
+      await supabase.from("users").update({ plan: "pro" }).eq("id", userId);
+      return "pro";
+    }
+  }
+
+  return "free";
 }
 
 /**
  * Retrieves profile info (plan, forwarding_alias) for a user.
  */
 export async function getUserProfile(userId: string): Promise<{ plan: UserPlan; forwardingAlias: string }> {
+  const plan = await getUserPlan(userId);
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("users")
-    .select("plan, forwarding_alias")
+    .select("forwarding_alias")
     .eq("id", userId)
     .maybeSingle();
 
   return {
-    plan: data?.plan === "pro" ? "pro" : "free",
+    plan,
     forwardingAlias: data?.forwarding_alias || "my-receipts",
   };
 }

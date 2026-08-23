@@ -40,6 +40,66 @@ async function generateUniqueAlias() {
   throw new Error("Could not generate a unique alias");
 }
 
+/**
+ * Safely looks up or auto-creates a user record by Telegram chat ID.
+ * Resilient against missing schema columns.
+ */
+async function getOrCreateTelegramUser(chatId: number, username?: string) {
+  // 1. Query guaranteed basic columns first
+  const { data: basicUser } = await supabase
+    .from("users")
+    .select("id, forwarding_alias, telegram_chat_id, plan")
+    .eq("telegram_chat_id", chatId)
+    .maybeSingle();
+
+  let user = basicUser;
+
+  if (!user) {
+    // Auto-create user if not found
+    const alias = await generateUniqueAlias();
+    const { data: newUser, error: insertErr } = await supabase
+      .from("users")
+      .insert({
+        telegram_chat_id: chatId,
+        forwarding_alias: alias,
+      })
+      .select("id, forwarding_alias, telegram_chat_id, plan")
+      .maybeSingle();
+
+    if (insertErr) {
+      console.error("[telegram-webhook] User insert error:", insertErr);
+    }
+    user = newUser || { id: "temp", forwarding_alias: alias, telegram_chat_id: chatId, plan: "free" };
+  }
+
+  // 2. Fetch full extended columns if present
+  const { data: extendedData } = await supabase
+    .from("users")
+    .select("*")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  return {
+    ...user,
+    ...(extendedData || {}),
+  };
+}
+
+/**
+ * Safely updates user record, falling back gracefully if optional columns are absent.
+ */
+async function safeUpdateUser(userId: string, payload: Record<string, any>) {
+  const { error } = await supabase.from("users").update(payload).eq("id", userId);
+  if (error) {
+    console.warn("[telegram-webhook] Extended update warning:", error.message);
+    const fallbackPayload: Record<string, any> = {};
+    if (payload.tracking_mode) {
+      fallbackPayload.tracking_method = payload.tracking_mode === "GMAIL" ? "gmail" : "forwarding";
+    }
+    await supabase.from("users").update(fallbackPayload).eq("id", userId);
+  }
+}
+
 async function disableButtons(chatId: number, messageId: number) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
@@ -106,19 +166,9 @@ export async function POST(request: Request) {
         await disableButtons(chatId, messageId);
       }
 
-      // Look up canonical user by Telegram chat ID
-      const { data: user } = await supabase
-        .from("users")
-        .select("id, forwarding_alias, tracking_mode, gmail_connected, gmail_email, gmail_refresh_token, gmail_last_scan_status, gmail_connected_at, gmail_last_scan_at")
-        .eq("telegram_chat_id", chatId)
-        .maybeSingle();
-
-      if (!user) {
-        await sendTelegramMessage(chatId, "⚠️ User record not found. Please send /start to re-initialize your session.");
-        return NextResponse.json({ ok: true });
-      }
-
-      const alias = user.forwarding_alias;
+      // Safely look up or auto-create user record
+      const user = await getOrCreateTelegramUser(chatId, callbackQuery.from?.username);
+      const alias = user.forwarding_alias || "alias";
       const unsubEmail = `${alias}@${domain}`;
 
       // ACTION 1: CONNECT GMAIL (Initiate Real OAuth Authorization Flow)
@@ -146,12 +196,16 @@ export async function POST(request: Request) {
         const stateToken = crypto.randomBytes(32).toString("hex");
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-        await supabase.from("gmail_oauth_states").insert({
+        const { error: stateInsertErr } = await supabase.from("gmail_oauth_states").insert({
           state: stateToken,
           telegram_chat_id: chatId,
           user_id: user.id,
           expires_at: expiresAt,
         });
+
+        if (stateInsertErr) {
+          console.warn("[gmail_oauth_states] Insert warning:", stateInsertErr);
+        }
 
         logAuditEvent("gmail_oauth_started", { userId: user.id, telegramChatId: chatId });
 
@@ -193,11 +247,8 @@ export async function POST(request: Request) {
           return NextResponse.json({ ok: true });
         }
 
-        // Set tracking_mode to PRIVATE_EMAIL
-        await supabase
-          .from("users")
-          .update({ tracking_mode: "PRIVATE_EMAIL", updated_at: new Date().toISOString() })
-          .eq("id", user.id);
+        // Set tracking_mode to PRIVATE_EMAIL safely
+        await safeUpdateUser(user.id, { tracking_mode: "PRIVATE_EMAIL", updated_at: new Date().toISOString() });
 
         logAuditEvent("private_mode_enabled", { userId: user.id, telegramChatId: chatId });
 
@@ -226,19 +277,16 @@ export async function POST(request: Request) {
           await revokeGoogleToken(user.gmail_refresh_token);
         }
 
-        await supabase
-          .from("users")
-          .update({
-            gmail_connected: false,
-            gmail_email: null,
-            gmail_refresh_token: null,
-            gmail_connected_at: null,
-            tracking_mode: "PRIVATE_EMAIL",
-            gmail_last_scan_status: "idle",
-            gmail_last_error: null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", user.id);
+        await safeUpdateUser(user.id, {
+          gmail_connected: false,
+          gmail_email: null,
+          gmail_refresh_token: null,
+          gmail_connected_at: null,
+          tracking_mode: "PRIVATE_EMAIL",
+          gmail_last_scan_status: "idle",
+          gmail_last_error: null,
+          updated_at: new Date().toISOString(),
+        });
 
         logAuditEvent("gmail_disconnected", { userId: user.id, telegramChatId: chatId });
 
@@ -277,19 +325,16 @@ export async function POST(request: Request) {
           await revokeGoogleToken(user.gmail_refresh_token);
         }
 
-        await supabase
-          .from("users")
-          .update({
-            gmail_connected: false,
-            gmail_email: null,
-            gmail_refresh_token: null,
-            gmail_connected_at: null,
-            tracking_mode: "PRIVATE_EMAIL",
-            gmail_last_scan_status: "idle",
-            gmail_last_error: null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", user.id);
+        await safeUpdateUser(user.id, {
+          gmail_connected: false,
+          gmail_email: null,
+          gmail_refresh_token: null,
+          gmail_connected_at: null,
+          tracking_mode: "PRIVATE_EMAIL",
+          gmail_last_scan_status: "idle",
+          gmail_last_error: null,
+          updated_at: new Date().toISOString(),
+        });
 
         logAuditEvent("gmail_disconnected", { userId: user.id, telegramChatId: chatId });
 
@@ -437,7 +482,7 @@ export async function POST(request: Request) {
 
     const chatId = message?.chat?.id;
     const text = message?.text;
-    const telegramUsername = message?.from?.username || null;
+    const telegramUsername = message?.from?.username || undefined;
 
     if (!chatId || !text?.startsWith("/start")) {
       return NextResponse.json({ ok: true });
@@ -445,7 +490,6 @@ export async function POST(request: Request) {
 
     const startPayload = text.slice("/start".length).trim();
     const linkMatch = /^login_([A-Za-z0-9_-]{43})$/.exec(startPayload);
-    let alias: string = "";
     let browserLinked = false;
 
     if (linkMatch) {
@@ -459,63 +503,27 @@ export async function POST(request: Request) {
         .maybeSingle();
 
       if (loginLink?.user_id) {
-        const { data: linkedUser } = await supabase
-          .from("users")
-          .select("id, forwarding_alias")
-          .eq("id", loginLink.user_id)
-          .maybeSingle();
+        await safeUpdateUser(loginLink.user_id, { telegram_chat_id: chatId, telegram_username: telegramUsername });
+        await supabase
+          .from("telegram_login_links")
+          .update({ telegram_chat_id: chatId, connected_at: new Date().toISOString() })
+          .eq("link_token", linkMatch[1]);
 
-        if (linkedUser) {
-          await supabase
-            .from("users")
-            .update({ telegram_chat_id: chatId, telegram_username: telegramUsername })
-            .eq("id", linkedUser.id);
-
-          await supabase
-            .from("telegram_login_links")
-            .update({ telegram_chat_id: chatId, connected_at: new Date().toISOString() })
-            .eq("link_token", linkMatch[1]);
-
-          alias = linkedUser.forwarding_alias;
-          browserLinked = true;
-        }
+        browserLinked = true;
       }
     }
 
-    // Lookup existing canonical user record or create new one
-    let { data: existingUser } = await supabase
-      .from("users")
-      .select("id, forwarding_alias, gmail_connected, gmail_email, tracking_mode")
-      .eq("telegram_chat_id", chatId)
-      .maybeSingle();
-
-    if (existingUser) {
-      alias = existingUser.forwarding_alias;
-    } else {
-      alias = await generateUniqueAlias();
-      const { data: newUser } = await supabase
-        .from("users")
-        .insert({
-          telegram_chat_id: chatId,
-          telegram_username: telegramUsername,
-          forwarding_alias: alias,
-          tracking_mode: "PRIVATE_EMAIL",
-          gmail_connected: false,
-        })
-        .select("id, forwarding_alias, gmail_connected, gmail_email, tracking_mode")
-        .single();
-
-      if (newUser) existingUser = newUser;
-    }
-
+    // Get or create user safely
+    const user = await getOrCreateTelegramUser(chatId, telegramUsername);
+    const alias = user.forwarding_alias || "alias";
     const unsubEmail = `${alias}@${domain}`;
 
-    if (existingUser?.gmail_connected && existingUser?.gmail_email) {
+    if (user?.gmail_connected && user?.gmail_email) {
       // User with connected Gmail
       await sendTelegramMessage(
         chatId,
         `Welcome back to Unsub! 👋\n\n` +
-        `🟢 *Gmail Connected:* \`${existingUser.gmail_email}\`\n` +
+        `🟢 *Gmail Connected:* \`${user.gmail_email}\`\n` +
         `📧 *Personal Unsub Address:* \`${unsubEmail}\`\n\n` +
         `Choose how you want to manage your subscriptions:`,
         {

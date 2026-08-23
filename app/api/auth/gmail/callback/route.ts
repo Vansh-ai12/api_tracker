@@ -112,19 +112,25 @@ export async function GET(request: Request) {
       throw new Error("Could not find matching application user for state.");
     }
 
-    // 7. Update canonical user atomically
+    // 7. Update canonical user atomically (grant Pro plan to vj2754108@gmail.com)
+    const isProAdmin = gmailEmail.toLowerCase() === "vj2754108@gmail.com";
+    const updatePayload: Record<string, any> = {
+      gmail_connected: true,
+      tracking_mode: "GMAIL",
+      gmail_email: gmailEmail,
+      gmail_refresh_token: encryptedRefreshToken,
+      gmail_connected_at: new Date().toISOString(),
+      gmail_last_scan_status: "idle",
+      gmail_last_error: null,
+      updated_at: new Date().toISOString(),
+    };
+    if (isProAdmin) {
+      updatePayload.plan = "pro";
+    }
+
     const { error: updateErr } = await supabase
       .from("users")
-      .update({
-        gmail_connected: true,
-        tracking_mode: "GMAIL",
-        gmail_email: gmailEmail,
-        gmail_refresh_token: encryptedRefreshToken,
-        gmail_connected_at: new Date().toISOString(),
-        gmail_last_scan_status: "idle",
-        gmail_last_error: null,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("id", targetUserId);
 
     if (updateErr) {
