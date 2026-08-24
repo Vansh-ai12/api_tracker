@@ -6,33 +6,30 @@ const IV_LENGTH = 12; // 96 bits for GCM
 
 /**
  * Resolves the ENCRYPTION_KEY environment variable to a 32-byte Buffer.
- * Supports 64-char hex strings, 32-byte raw strings, or base64 strings.
- * Throws an error if key is missing or invalid length.
+ * Supports 64-char hex strings, 32-byte raw strings, base64 strings, or SHA-256 derivation.
  */
 export function getEncryptionKey(overrideKey?: string): Buffer {
   const rawKey = overrideKey || process.env.ENCRYPTION_KEY;
   if (!rawKey) {
     throw new Error(
-      "[encryption] ENCRYPTION_KEY environment variable is missing. Set a 32-byte hex/base64 key in .env.local"
+      "[encryption] ENCRYPTION_KEY environment variable is missing. Set a 32-byte key in .env.local"
     );
   }
 
-  let keyBuf: Buffer;
   if (rawKey.length === 64 && /^[0-9a-fA-F]+$/.test(rawKey)) {
-    keyBuf = Buffer.from(rawKey, "hex");
+    return Buffer.from(rawKey, "hex");
   } else if (Buffer.from(rawKey, "utf-8").length === 32) {
-    keyBuf = Buffer.from(rawKey, "utf-8");
+    return Buffer.from(rawKey, "utf-8");
   } else {
-    keyBuf = Buffer.from(rawKey, "base64");
+    try {
+      const base64Buf = Buffer.from(rawKey, "base64");
+      if (base64Buf.length === 32) return base64Buf;
+    } catch {
+      // Fallback
+    }
+    // Deterministic 32-byte key derivation for arbitrary string / UUID keys
+    return crypto.createHash("sha256").update(rawKey).digest();
   }
-
-  if (keyBuf.length !== 32) {
-    throw new Error(
-      `[encryption] Invalid ENCRYPTION_KEY: Must resolve to exactly 32 bytes (got ${keyBuf.length} bytes).`
-    );
-  }
-
-  return keyBuf;
 }
 
 /**

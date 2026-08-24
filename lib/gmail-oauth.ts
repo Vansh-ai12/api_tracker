@@ -119,7 +119,12 @@ export async function getFreshAccessToken(encryptedRefreshToken: string): Promis
   const data = await response.json();
 
   if (!response.ok || data.error) {
-    throw new Error(`[gmail-oauth] Refresh token failed: ${data.error_description || data.error || "Token invalid/expired"}`);
+    const errorMsg = data.error_description || data.error || "Token invalid/expired";
+    const err = new Error(`[gmail-oauth] Refresh token failed: ${errorMsg}`);
+    if (data.error === "invalid_grant" || (typeof errorMsg === "string" && errorMsg.toLowerCase().includes("revoked"))) {
+      (err as any).isTokenExpired = true;
+    }
+    throw err;
   }
 
   if (!data.access_token) {

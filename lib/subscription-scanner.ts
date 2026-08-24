@@ -84,7 +84,7 @@ export async function parseEmailContent(emailText: string): Promise<ExtractedSub
       messages: [
         {
           role: "system",
-          content: `You are an expert email receipt & subscription parser for recurring services (e.g. Netflix, Spotify, ChatGPT, Canva, GitHub, AWS, SaaS).
+          content: `You are an expert email receipt & subscription parser for recurring services (e.g. Netflix, Spotify, ChatGPT, Canva, GitHub, AWS, SaaS, Apple, Google Play).
 Return ONLY valid JSON matching this schema:
 {
   "service_name": "string (required, e.g. Netflix)",
@@ -98,7 +98,7 @@ Return ONLY valid JSON matching this schema:
         },
         {
           role: "user",
-          content: emailText.substring(0, 4000), // Enforce length limit
+          content: emailText.substring(0, 4000),
         },
       ],
     });
@@ -141,12 +141,55 @@ function decodeGmailBody(payload: any): string {
     for (const part of payload.parts) {
       if (part.mimeType === "text/html" && part.body?.data) {
         const html = Buffer.from(part.body.data, "base64url").toString("utf-8");
-        return html.replace(/<[^>]*>/g, " "); // Strip basic HTML tags
+        return html.replace(/<[^>]*>/g, " ");
       }
     }
   }
 
   return "";
+}
+
+/**
+ * Computes next valid upcoming renewal date if not explicitly stated.
+ */
+function inferNextRenewalDate(
+  explicitDate: string | null,
+  billingCycle: "weekly" | "monthly" | "yearly" | null,
+  messageTimestamp?: number,
+): string {
+  const now = new Date();
+
+  if (explicitDate && /^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) {
+    const explicit = new Date(explicitDate);
+    if (explicit >= now) {
+      return explicitDate;
+    }
+  }
+
+  const baseDate = messageTimestamp ? new Date(messageTimestamp) : new Date();
+  const cycle = billingCycle || "monthly";
+  const nextDate = new Date(baseDate);
+
+  if (cycle === "yearly") {
+    nextDate.setFullYear(nextDate.getFullYear() + 1);
+  } else if (cycle === "weekly") {
+    nextDate.setDate(nextDate.getDate() + 7);
+  } else {
+    nextDate.setMonth(nextDate.getMonth() + 1);
+  }
+
+  // Advance cycle if calculated date is already in the past
+  while (nextDate < now) {
+    if (cycle === "yearly") {
+      nextDate.setFullYear(nextDate.getFullYear() + 1);
+    } else if (cycle === "weekly") {
+      nextDate.setDate(nextDate.getDate() + 7);
+    } else {
+      nextDate.setMonth(nextDate.getMonth() + 1);
+    }
+  }
+
+  return nextDate.toISOString().split("T")[0];
 }
 
 /**
@@ -224,7 +267,6 @@ export async function runGmailInboxScan(userId: string): Promise<{
         .maybeSingle();
 
       if (existingEvidence) {
-        // Skip already processed message
         continue;
       }
 
@@ -248,10 +290,16 @@ export async function runGmailInboxScan(userId: string): Promise<{
       const parsed = await parseEmailContent(fullText);
       if (!parsed) continue;
 
+      const msgTimestamp = msgData.internalDate ? parseInt(msgData.internalDate, 10) : undefined;
+      const computedRenewalDate = inferNextRenewalDate(
+        parsed.renewal_date,
+        parsed.billing_cycle,
+        msgTimestamp,
+      );
+
       // 7. Upsert subscription record cleanly
       let targetSubId: string | null = null;
 
-      // Check if user already tracks this service
       const { data: existingSub } = await supabase
         .from("subscriptions")
         .select("id")
@@ -266,8 +314,8 @@ export async function runGmailInboxScan(userId: string): Promise<{
           .update({
             amount: parsed.amount ?? undefined,
             currency: parsed.currency,
-            billing_cycle: parsed.billing_cycle ?? undefined,
-            renewal_date: parsed.renewal_date ?? undefined,
+            billing_cycle: parsed.billing_cycle ?? "monthly",
+            renewal_date: computedRenewalDate,
             status: "active",
           })
           .eq("id", existingSub.id);
@@ -282,8 +330,8 @@ export async function runGmailInboxScan(userId: string): Promise<{
             domain: parsed.domain,
             amount: parsed.amount,
             currency: parsed.currency,
-            billing_cycle: parsed.billing_cycle,
-            renewal_date: parsed.renewal_date,
+            billing_cycle: parsed.billing_cycle || "monthly",
+            renewal_date: computedRenewalDate,
             status: "active",
           })
           .select("id")
@@ -332,13 +380,27 @@ export async function runGmailInboxScan(userId: string): Promise<{
   } catch (error: any) {
     console.error("[subscription-scanner] Scan failed:", error);
 
+    const isTokenExpired = Boolean(error?.isTokenExpired);
+    const status = isTokenExpired ? "token_expired" : "failed";
+
     await supabase
       .from("users")
       .update({
-        gmail_last_scan_status: "failed",
+        gmail_last_scan_status: status,
+        gmail_connected: isTokenExpired ? false : undefined,
         gmail_last_error: error.message,
       })
       .eq("id", userId);
+
+    if (isTokenExpired) {
+      logAuditEvent("gmail_token_refresh_failed", { userId, error: error.message });
+      return {
+        scannedCount,
+        newSubscriptionsCount,
+        updatedSubscriptionsCount,
+        error: "TOKEN_EXPIRED",
+      };
+    }
 
     logAuditEvent("gmail_scan_failed", { userId, error: error.message });
 

@@ -30,6 +30,28 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
     }
   }
 
+  async function handleConnectGmail() {
+    setLoading(true);
+    setMessage("Preparing secure Google authorization...");
+    try {
+      const res = await fetch("/api/user/gmail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "connect" }),
+      });
+      const data = await res.json();
+      if (res.ok && data.oauth_url) {
+        window.location.href = data.oauth_url;
+      } else {
+        setMessage(data.error || "Could not start Gmail connection.");
+      }
+    } catch {
+      setMessage("Network error occurred.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleDisconnect() {
     if (!confirm("Are you sure you want to disconnect Gmail? This will revoke access and delete your stored credentials.")) {
       return;
@@ -112,7 +134,7 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
             ) : (
               <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
                 No Gmail access. Forward subscription receipts to{" "}
-                <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{status.forwarding_alias}@unsub.app</strong> to auto-track.
+                <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{status.forwarding_alias}@unsub.app</strong> to auto-track, or connect Gmail below.
               </p>
             )}
           </div>
@@ -140,14 +162,14 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
               </button>
             </>
           ) : (
-            <a
-              href="https://t.me/UnsubGbot"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2 rounded-full bg-[#229ED9] hover:bg-[#1e8dbf] text-white text-xs font-semibold transition-colors shadow-xs"
+            <button
+              type="button"
+              onClick={handleConnectGmail}
+              disabled={loading}
+              className="px-4 py-2 rounded-full bg-black dark:bg-white text-white dark:text-black hover:bg-gray-800 dark:hover:bg-gray-200 text-xs font-semibold transition-colors shadow-xs cursor-pointer disabled:opacity-50"
             >
-              🔗 Connect Gmail in Telegram
-            </a>
+              {loading ? "Connecting…" : "🔗 Connect Gmail"}
+            </button>
           )}
         </div>
       </div>

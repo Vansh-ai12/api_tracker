@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
-import { revokeGoogleToken } from "@/lib/gmail-oauth";
+import { generateGoogleAuthUrl, revokeGoogleToken } from "@/lib/gmail-oauth";
 import { runGmailInboxScan } from "@/lib/subscription-scanner";
 import { logAuditEvent } from "@/lib/audit-logger";
+import crypto from "crypto";
 
 export async function GET() {
   const userId = await getSessionUserId();
@@ -52,6 +53,24 @@ export async function POST(request: Request) {
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    if (action === "connect") {
+      // 1. Generate 15-minute one-time OAuth state token tied directly to this canonical user_id
+      const stateToken = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+      await supabase.from("gmail_oauth_states").insert({
+        state: stateToken,
+        telegram_chat_id: user.telegram_chat_id || 0,
+        user_id: user.id,
+        expires_at: expiresAt,
+      });
+
+      logAuditEvent("gmail_oauth_started", { userId: user.id, telegramChatId: user.telegram_chat_id || undefined });
+
+      const oauthUrl = generateGoogleAuthUrl(stateToken);
+      return NextResponse.json({ success: true, oauth_url: oauthUrl });
     }
 
     if (action === "disconnect") {

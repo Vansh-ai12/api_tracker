@@ -12,35 +12,62 @@ export async function getSessionUserId(): Promise<string | null> {
   const cookieStore = await cookies();
   const sessionToken = cookieStore.get("unsub_session")?.value;
 
-  if (!sessionToken) return null;
+  if (!sessionToken) {
+    return null;
+  }
 
   const supabase = createServiceClient();
 
-  // Find a verified, non-expired session with this token.
-  const { data: session, error: sessionError } = await supabase
+  const { data: session, error } = await supabase
     .from("web_sessions")
     .select("user_id, telegram_chat_id, expires_at, verified")
     .eq("session_token", sessionToken)
-    .single();
+    .maybeSingle();
 
-  if (sessionError || !session) return null;
-  if (!session.verified) return null;
-  if (new Date(session.expires_at) < new Date()) return null;
+  if (error || !session) {
+    return null;
+  }
 
-  // Email/password sessions contain the user ID directly. Keep the Telegram
-  // lookup for existing OTP sessions created before normal sign-in was added.
-  if (session.user_id) return session.user_id;
+  // Session must be verified.
+  if (!session.verified) {
+    return null;
+  }
 
-  if (session.telegram_chat_id === null) return null;
+  // Session must not be expired.
+  if (!session.expires_at || new Date(session.expires_at) <= new Date()) {
+    return null;
+  }
 
-  // Resolve legacy telegram_chat_id -> user UUID.
+  /*
+   * IMPORTANT:
+   * For normal website login, web_sessions.user_id is the canonical
+   * users.id. Return it directly.
+   *
+   * Do NOT create a user here.
+   * Do NOT look up Gmail.
+   * Do NOT create a Telegram user.
+   */
+  if (session.user_id) {
+    return session.user_id;
+  }
+
+  /*
+   * Legacy Telegram-only sessions.
+   * Keep this only for old sessions that don't have user_id.
+   */
+  if (session.telegram_chat_id == null) {
+    return null;
+  }
+
   const { data: user, error: userError } = await supabase
     .from("users")
     .select("id")
     .eq("telegram_chat_id", session.telegram_chat_id)
-    .single();
+    .maybeSingle();
 
-  if (userError || !user) return null;
+  if (userError || !user) {
+    return null;
+  }
 
   return user.id;
 }

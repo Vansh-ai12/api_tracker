@@ -17,12 +17,16 @@ export async function POST(req: Request) {
     const linkedTelegramChatId = await getLinkedTelegramChatId({
       allowExpiredLink: true,
     });
-    const telegramChatId = linkedTelegramChatId ?? Number(body?.telegram_chat_id);
+    const telegramChatId =
+      linkedTelegramChatId ?? Number(body?.telegram_chat_id);
     const otp = String(body?.otp ?? "").trim();
 
     if (!telegramChatId || !Number.isInteger(telegramChatId) || !otp) {
       return NextResponse.json(
-        { error: "A connected Telegram account and verification code are required" },
+        {
+          error:
+            "A connected Telegram account and verification code are required",
+        },
         { status: 400 },
       );
     }
@@ -60,21 +64,53 @@ export async function POST(req: Request) {
       Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
 
-    // Mark the session as verified: set the session token, clear the OTP,
-    // and extend expiry to 30 days.
+    // Resolve the ONE canonical application user for this Telegram account.
+    const { data: canonicalUser, error: canonicalUserError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("telegram_chat_id", telegramChatId)
+      .maybeSingle();
+
+    if (canonicalUserError || !canonicalUser) {
+      console.error(
+        "[verify] Canonical Telegram user not found:",
+        canonicalUserError,
+      );
+
+      return NextResponse.json(
+        { error: "Telegram account is not linked to an Unsub user." },
+        { status: 404 },
+      );
+    }
+
+    // Mark this exact web session as belonging to the canonical user.
     const { data: updatedSession, error: updateError } = await supabase
       .from("web_sessions")
       .update({
+        user_id: canonicalUser.id,
         verified: true,
         session_token: sessionToken,
-        otp: null,           // clear OTP — single-use
+        otp: null,
         expires_at: expiresAt,
       })
       .eq("id", session.id)
       .eq("verified", false)
       .eq("otp", otp)
-      .select("id")
+      .select("id, user_id")
       .maybeSingle();
+
+    if (updateError) {
+      console.error("[verify] Failed to update session:", updateError);
+
+      return NextResponse.json({ error: "Database error" }, { status: 500 });
+    }
+
+    if (!updatedSession) {
+      return NextResponse.json(
+        { error: "Invalid or expired code." },
+        { status: 401 },
+      );
+    }
 
     if (updateError) {
       console.error("[verify] Failed to update session:", updateError);
@@ -108,6 +144,9 @@ export async function POST(req: Request) {
     return response;
   } catch (err) {
     console.error("[verify] Unexpected error:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

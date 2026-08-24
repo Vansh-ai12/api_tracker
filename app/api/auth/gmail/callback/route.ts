@@ -5,27 +5,34 @@ import { encryptToken } from "@/lib/encryption";
 import { logAuditEvent } from "@/lib/audit-logger";
 
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  const errorParam = url.searchParams.get("error");
+  const { searchParams } = new URL(request.url);
+  const code = searchParams.get("code");
+  const state = searchParams.get("state");
+  const error = searchParams.get("error");
 
   const botUsername = "UnsubGbot";
   const botUrl = `https://t.me/${botUsername}`;
 
-  if (errorParam || !state || !code) {
-    console.warn("[gmail-callback] OAuth canceled or invalid parameters:", { errorParam, state: !!state, code: !!code });
-    logAuditEvent("gmail_oauth_failed", { error: errorParam || "Missing state or code" });
+  if (error || !code || !state) {
+    console.error("[gmail-callback] Error or missing code/state:", {
+      error,
+      hasCode: !!code,
+      hasState: !!state,
+    });
+    logAuditEvent("gmail_oauth_failed", {
+      error: error || "Missing code or state",
+    });
 
     return new NextResponse(
       renderHtmlResponse({
-        title: "Gmail Setup Canceled",
-        heading: "⚠️ Setup Not Completed",
-        message: "Google authorization was canceled or failed. You can safely return to Telegram.",
+        title: "Connection Failed",
+        heading: "❌ Connection Cancelled",
+        message:
+          "Google authorization was cancelled or encountered an issue. You can safely return to Telegram or your dashboard to try again.",
         botUrl,
         success: false,
       }),
-      { headers: { "Content-Type": "text/html" } }
+      { headers: { "Content-Type": "text/html" } },
     );
   }
 
@@ -39,18 +46,22 @@ export async function GET(request: Request) {
     .maybeSingle();
 
   if (stateLookupErr || !stateRecord) {
-    console.error("[gmail-callback] Invalid or unrecognized OAuth state:", stateLookupErr);
+    console.error(
+      "[gmail-callback] Invalid or unrecognized OAuth state:",
+      stateLookupErr,
+    );
     logAuditEvent("gmail_oauth_failed", { error: "Unrecognized OAuth state" });
 
     return new NextResponse(
       renderHtmlResponse({
         title: "Session Expired",
         heading: "❌ Invalid or Expired Link",
-        message: "This authorization link has expired or was already used. Please request a new setup link in Telegram.",
+        message:
+          "This authorization link has expired or was already used. Please request a new setup link in Telegram or your dashboard.",
         botUrl,
         success: false,
       }),
-      { headers: { "Content-Type": "text/html" } }
+      { headers: { "Content-Type": "text/html" } },
     );
   }
 
@@ -59,16 +70,20 @@ export async function GET(request: Request) {
 
   // 3. Verify state has not expired
   if (new Date(stateRecord.expires_at) < new Date()) {
-    logAuditEvent("gmail_oauth_failed", { error: "Expired OAuth state", telegramChatId: stateRecord.telegram_chat_id });
+    logAuditEvent("gmail_oauth_failed", {
+      error: "Expired OAuth state",
+      telegramChatId: stateRecord.telegram_chat_id,
+    });
     return new NextResponse(
       renderHtmlResponse({
         title: "Link Expired",
         heading: "⏰ Link Expired",
-        message: "This authorization link expired after 15 minutes. Please try again from Telegram.",
+        message:
+          "This authorization link expired after 15 minutes. Please try again from Telegram or your dashboard.",
         botUrl,
         success: false,
       }),
-      { headers: { "Content-Type": "text/html" } }
+      { headers: { "Content-Type": "text/html" } },
     );
   }
 
@@ -82,38 +97,70 @@ export async function GET(request: Request) {
         renderHtmlResponse({
           title: "Re-authorization Required",
           heading: "⚠️ Permission Error",
-          message: "Google did not grant offline access. Please remove Unsub from your Google Account permissions and try again.",
+          message:
+            "Google did not grant offline access. Please remove Unsub from your Google Account permissions and try again.",
           botUrl,
           success: false,
         }),
-        { headers: { "Content-Type": "text/html" } }
+        { headers: { "Content-Type": "text/html" } },
       );
     }
 
     // 5. Encrypt refresh token with AES-256-GCM
     const encryptedRefreshToken = encryptToken(refreshToken);
 
-    // 6. Resolve canonical user record
-    let targetUserId = stateRecord.user_id;
+    // 6. Resolve the EXISTING canonical Telegram user.
+    // IMPORTANT:
+    // Gmail OAuth must NEVER create a new users row.
+    // The Telegram /start flow creates the canonical user first.
+    // OAuth only attaches Gmail credentials to that existing row.
 
-    if (!targetUserId) {
-      const { data: existingUser } = await supabase
+    let targetUserId: string | null = stateRecord.user_id || null;
+
+    if (targetUserId) {
+      const { data: canonicalUser, error: canonicalLookupError } =
+        await supabase
+          .from("users")
+          .select("id, telegram_chat_id")
+          .eq("id", targetUserId)
+          .maybeSingle();
+
+      if (canonicalLookupError || !canonicalUser) {
+        throw new Error("OAuth state points to a missing user.");
+      }
+
+      // Make absolutely sure this is the Telegram user that started OAuth.
+      if (
+        stateRecord.telegram_chat_id &&
+        canonicalUser.telegram_chat_id !== stateRecord.telegram_chat_id
+      ) {
+        throw new Error("OAuth state/user mismatch.");
+      }
+    }
+
+    // Fallback only if the OAuth state somehow has no user_id.
+    if (!targetUserId && stateRecord.telegram_chat_id) {
+      const { data: telegramUser, error: telegramLookupError } = await supabase
         .from("users")
         .select("id")
         .eq("telegram_chat_id", stateRecord.telegram_chat_id)
         .maybeSingle();
 
-      if (existingUser) {
-        targetUserId = existingUser.id;
+      if (telegramLookupError) {
+        throw telegramLookupError;
+      }
+
+      if (telegramUser) {
+        targetUserId = telegramUser.id;
       }
     }
 
     if (!targetUserId) {
-      throw new Error("Could not find matching application user for state.");
+      throw new Error(
+        "No canonical Telegram user found for this Gmail OAuth request.",
+      );
     }
 
-    // 7. Update canonical user atomically (grant Pro plan to vj2754108@gmail.com)
-    const isProAdmin = gmailEmail.toLowerCase() === "vj2754108@gmail.com";
     const updatePayload: Record<string, any> = {
       gmail_connected: true,
       tracking_mode: "GMAIL",
@@ -124,6 +171,31 @@ export async function GET(request: Request) {
       gmail_last_error: null,
       updated_at: new Date().toISOString(),
     };
+
+    // 7. Check if an orphan record exists with this email or telegram_chat_id and reconcile
+    if (stateRecord.telegram_chat_id) {
+      const { data: orphanUser } = await supabase
+        .from("users")
+        .select("id")
+        .eq("telegram_chat_id", stateRecord.telegram_chat_id)
+        .neq("id", targetUserId)
+        .maybeSingle();
+
+      if (orphanUser) {
+        await supabase
+          .from("subscriptions")
+          .update({ user_id: targetUserId })
+          .eq("user_id", orphanUser.id);
+        await supabase
+          .from("subscription_evidence")
+          .update({ user_id: targetUserId })
+          .eq("user_id", orphanUser.id);
+        await supabase.from("users").delete().eq("id", orphanUser.id);
+      }
+    }
+
+    // 7. Update the canonical user associated with this OAuth state
+    const isProAdmin = gmailEmail.toLowerCase() === "vj2754108@gmail.com";
     if (isProAdmin) {
       updatePayload.plan = "pro";
     }
@@ -140,54 +212,80 @@ export async function GET(request: Request) {
 
     logAuditEvent("gmail_oauth_completed", {
       userId: targetUserId,
-      telegramChatId: stateRecord.telegram_chat_id,
+      telegramChatId: stateRecord.telegram_chat_id || undefined,
     });
 
-    // 8. Notify user in Telegram
+    // 9. Notify user in Telegram if telegram_chat_id is present on state or user
+    const { data: targetUserRecord } = await supabase
+      .from("users")
+      .select("telegram_chat_id")
+      .eq("id", targetUserId)
+      .maybeSingle();
+
+    const notifyChatId =
+      stateRecord.telegram_chat_id || targetUserRecord?.telegram_chat_id;
     const token = process.env.TELEGRAM_BOT_TOKEN;
-    if (token && stateRecord.telegram_chat_id) {
+
+    if (token && notifyChatId) {
       try {
-        const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: stateRecord.telegram_chat_id,
-            text:
-              `✅ <b>Gmail connected successfully!</b>\n\n` +
-              `Unsub can now analyze your inbox for subscription emails.\n\n` +
-              `<b>Gmail account:</b>\n<code>${gmailEmail}</code>`,
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "📬 Scan Inbox", callback_data: "scan_inbox" },
-                  { text: "⚙️ Gmail Settings", callback_data: "gmail_settings" },
+        const tgRes = await fetch(
+          `https://api.telegram.org/bot${token}/sendMessage`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: notifyChatId,
+              text:
+                `✅ <b>Gmail connected successfully!</b>\n\n` +
+                `Unsub can now analyze your inbox for subscription emails.\n\n` +
+                `<b>Gmail account:</b>\n<code>${gmailEmail}</code>`,
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: "📬 Scan Inbox", callback_data: "scan_inbox" },
+                    {
+                      text: "⚙️ Gmail Settings",
+                      callback_data: "gmail_settings",
+                    },
+                  ],
+                  [
+                    {
+                      text: "❌ Disconnect Gmail",
+                      callback_data: "disconnect_gmail",
+                    },
+                  ],
                 ],
-                [{ text: "❌ Disconnect Gmail", callback_data: "disconnect_gmail" }],
-              ],
-            },
-          }),
-        });
+              },
+            }),
+          },
+        );
 
         if (!tgRes.ok) {
           const tgErr = await tgRes.text();
-          console.error("[gmail-callback] Telegram notification failed:", tgErr);
+          console.error(
+            "[gmail-callback] Telegram notification failed:",
+            tgErr,
+          );
         }
       } catch (tgError) {
-        console.error("[gmail-callback] Failed to send Telegram notification:", tgError);
+        console.error(
+          "[gmail-callback] Failed to send Telegram notification:",
+          tgError,
+        );
       }
     }
 
-    // 9. Render success page
+    // 10. Render success page
     return new NextResponse(
       renderHtmlResponse({
-        title: "Gmail Connected!",
+        title: "Connected Successfully",
         heading: "✅ Gmail Connected Successfully",
-        message: `Your Gmail account (${gmailEmail}) has been securely connected to Unsub. You can return to Telegram or your web dashboard.`,
+        message: `Your Gmail account (${gmailEmail}) has been linked to Unsub with read-only receipt tracking permissions.`,
         botUrl,
         success: true,
       }),
-      { headers: { "Content-Type": "text/html" } }
+      { headers: { "Content-Type": "text/html" } },
     );
   } catch (err: any) {
     console.error("[gmail-callback] Callback processing failed:", err);
@@ -197,17 +295,14 @@ export async function GET(request: Request) {
       renderHtmlResponse({
         title: "Connection Failed",
         heading: "❌ Setup Error",
-        message: "An error occurred while connecting your Gmail account. Please try again.",
+        message:
+          "An error occurred while connecting your Gmail account. Please try again.",
         botUrl,
         success: false,
       }),
-      { headers: { "Content-Type": "text/html" } }
+      { headers: { "Content-Type": "text/html" } },
     );
   }
-}
-
-function escapeMarkdown(text: string): string {
-  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, "\\$&");
 }
 
 function renderHtmlResponse(opts: {
@@ -287,9 +382,9 @@ function renderHtmlResponse(opts: {
     <h1>${opts.heading}</h1>
     <p>${opts.message}</p>
     <div>
-      <a href="${opts.botUrl}" class="btn">Open Telegram App</a>
+      <a href="/dashboard" class="btn">Go to Web Dashboard</a>
       <br>
-      <a href="/dashboard" class="btn secondary-btn">Go to Web Dashboard</a>
+      <a href="${opts.botUrl}" class="btn secondary-btn">Open Telegram App</a>
     </div>
   </div>
 </body>

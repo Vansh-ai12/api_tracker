@@ -11,6 +11,7 @@ export type AuditEventType =
   | "gmail_scan_completed"
   | "gmail_scan_failed"
   | "gmail_disconnected"
+  | "gmail_token_refresh_failed"
   | "private_mode_enabled"
   | "email_webhook_received"
   | "email_webhook_failed";
