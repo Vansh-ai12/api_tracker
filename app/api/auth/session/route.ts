@@ -52,63 +52,15 @@ export async function POST(req: Request) {
     }
 
     // ------------------------------------------------------------
-    // 2. Find the EXISTING public user first.
-    //    Prefer auth_user_id, then fall back to Gmail email.
-    //    This prevents the Telegram user and web user from becoming
-    //    two separate rows.
+    // 2. Resolve the canonical user via the universal resolver.
+    //    This checks auth_user_id, gmail_email, and telegram_chat_id
+    //    to find or link an existing row. It only creates a new row
+    //    when absolutely no existing identity is found.
     // ------------------------------------------------------------
-    let userId: string | null = null;
-
-    const authEmail = authData.user.email?.trim().toLowerCase() || null;
-
-    const { data: authUser } = await supabase
-      .from("users")
-      .select("id")
-      .eq("auth_user_id", authData.user.id)
-      .maybeSingle();
-
-    if (authUser) {
-      userId = authUser.id;
-    }
-
-    // If there is no auth_user_id match, try the Gmail email.
-    // This is the important part for your current database:
-    // afa983... already owns vj2754108@gmail.com.
-    if (!userId && authEmail) {
-      const { data: gmailUser } = await supabase
-        .from("users")
-        .select("id")
-        .ilike("gmail_email", authEmail)
-        .maybeSingle();
-
-      if (gmailUser) {
-        userId = gmailUser.id;
-
-        // Attach the existing user to the Supabase Auth user.
-        const { error: linkError } = await supabase
-          .from("users")
-          .update({
-            auth_user_id: authData.user.id,
-          })
-          .eq("id", userId);
-
-        if (linkError) {
-          console.error(
-            "[auth/session] Failed to link existing user:",
-            linkError,
-          );
-          throw linkError;
-        }
-      }
-    }
-
-    // Only create a public user if absolutely no existing user was found.
-    if (!userId) {
-      userId = await ensurePublicUserForAuth(
-        authData.user.id,
-        authData.user.email,
-      );
-    }
+    const userId = await ensurePublicUserForAuth(
+      authData.user.id,
+      authData.user.email,
+    );
 
     // ------------------------------------------------------------
     // 3. Create the application session for THAT existing user.
@@ -150,7 +102,7 @@ export async function POST(req: Request) {
     const detail =
       error?.message ||
       error?.details ||
-      "Unsub’s database is not ready. Apply the Supabase migration and try again.";
+      "Unsub's database is not ready. Apply the Supabase migration and try again.";
     return NextResponse.json(
       { error: `Database error: ${detail}` },
       { status: 500 },

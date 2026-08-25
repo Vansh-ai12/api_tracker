@@ -3,8 +3,10 @@ import { getFreshAccessToken } from "./gmail-oauth";
 import { logAuditEvent } from "./audit-logger";
 import Groq from "groq-sdk";
 
-const GMAIL_MESSAGES_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
-const MAX_SCAN_MESSAGES = 25;
+const GMAIL_MESSAGES_ENDPOINT =
+  "https://gmail.googleapis.com/gmail/v1/users/me/messages";
+
+  
 
 export interface ExtractedSubscription {
   service_name: string;
@@ -20,26 +22,40 @@ export interface ExtractedSubscription {
  * Validates and normalizes AI-parsed subscription data.
  * Rejects malformed output.
  */
-function validateAndNormalizeParsedOutput(parsed: any): ExtractedSubscription | null {
+function validateAndNormalizeParsedOutput(
+  parsed: any,
+): ExtractedSubscription | null {
   if (!parsed || typeof parsed !== "object") return null;
-  if (!parsed.service_name || typeof parsed.service_name !== "string" || parsed.service_name.trim().length === 0) {
+  if (
+    !parsed.service_name ||
+    typeof parsed.service_name !== "string" ||
+    parsed.service_name.trim().length === 0
+  ) {
     return null;
   }
 
   const serviceName = parsed.service_name.trim();
-  const domain = typeof parsed.domain === "string" ? parsed.domain.toLowerCase().trim() : undefined;
-  
+  const domain =
+    typeof parsed.domain === "string"
+      ? parsed.domain.toLowerCase().trim()
+      : undefined;
+
   let amount: number | null = null;
-  if (typeof parsed.amount === "number" && !isNaN(parsed.amount) && parsed.amount > 0) {
+  if (
+    typeof parsed.amount === "number" &&
+    !isNaN(parsed.amount) &&
+    parsed.amount > 0
+  ) {
     amount = parsed.amount;
   } else if (typeof parsed.amount === "string") {
     const num = parseFloat(parsed.amount.replace(/[^0-9.]/g, ""));
     if (!isNaN(num) && num > 0) amount = num;
   }
 
-  const currency = typeof parsed.currency === "string" && parsed.currency.length === 3
-    ? parsed.currency.toUpperCase()
-    : "INR";
+  const currency =
+    typeof parsed.currency === "string" && parsed.currency.length === 3
+      ? parsed.currency.toUpperCase()
+      : "INR";
 
   let billingCycle: "weekly" | "monthly" | "yearly" | null = null;
   if (["weekly", "monthly", "yearly"].includes(parsed.billing_cycle)) {
@@ -69,10 +85,14 @@ function validateAndNormalizeParsedOutput(parsed: any): ExtractedSubscription | 
 /**
  * Parses email content using Groq AI with deterministic fallback.
  */
-export async function parseEmailContent(emailText: string): Promise<ExtractedSubscription | null> {
+export async function parseEmailContent(
+  emailText: string,
+): Promise<ExtractedSubscription | null> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    console.warn("[subscription-scanner] GROQ_API_KEY missing, skipping AI extraction.");
+    console.warn(
+      "[subscription-scanner] GROQ_API_KEY missing, skipping AI extraction.",
+    );
     return null;
   }
 
@@ -106,12 +126,18 @@ Return ONLY valid JSON matching this schema:
     const content = completion.choices[0]?.message?.content;
     if (!content) return null;
 
-    const cleaned = content.replace(/```json/g, "").replace(/```/g, "").trim();
+    const cleaned = content
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
     const rawParsed = JSON.parse(cleaned);
 
     return validateAndNormalizeParsedOutput(rawParsed);
   } catch (error) {
-    console.error("[subscription-scanner] Error parsing email with Groq:", error);
+    console.error(
+      "[subscription-scanner] Error parsing email with Groq:",
+      error,
+    );
     return null;
   }
 }
@@ -207,16 +233,33 @@ export async function runGmailInboxScan(userId: string): Promise<{
   // 1. Check & acquire scan lock
   const { data: user, error: userError } = await supabase
     .from("users")
-    .select("gmail_connected, gmail_refresh_token, gmail_last_scan_status, telegram_chat_id")
+    .select(
+      "gmail_connected, gmail_refresh_token, gmail_last_scan_status, telegram_chat_id",
+    )
     .eq("id", userId)
     .single();
 
-  if (userError || !user || !user.gmail_connected || !user.gmail_refresh_token) {
-    return { scannedCount: 0, newSubscriptionsCount: 0, updatedSubscriptionsCount: 0, error: "Gmail is not connected." };
+  if (
+    userError ||
+    !user ||
+    !user.gmail_connected ||
+    !user.gmail_refresh_token
+  ) {
+    return {
+      scannedCount: 0,
+      newSubscriptionsCount: 0,
+      updatedSubscriptionsCount: 0,
+      error: "Gmail is not connected.",
+    };
   }
 
   if (user.gmail_last_scan_status === "scanning") {
-    return { scannedCount: 0, newSubscriptionsCount: 0, updatedSubscriptionsCount: 0, error: "A scan is already in progress." };
+    return {
+      scannedCount: 0,
+      newSubscriptionsCount: 0,
+      updatedSubscriptionsCount: 0,
+      error: "A scan is already in progress.",
+    };
   }
 
   // Set lock state
@@ -229,7 +272,10 @@ export async function runGmailInboxScan(userId: string): Promise<{
     })
     .eq("id", userId);
 
-  logAuditEvent("gmail_scan_started", { userId, telegramChatId: user.telegram_chat_id });
+  logAuditEvent("gmail_scan_started", {
+    userId,
+    telegramChatId: user.telegram_chat_id,
+  });
 
   let scannedCount = 0;
   let newSubscriptionsCount = 0;
@@ -239,20 +285,48 @@ export async function runGmailInboxScan(userId: string): Promise<{
     // 2. Obtain fresh in-memory access token
     const accessToken = await getFreshAccessToken(user.gmail_refresh_token);
 
-    // 3. Search candidate messages
-    const query = "subject:(receipt OR invoice OR subscription OR renewed OR bill OR plan)";
-    const searchUrl = `${GMAIL_MESSAGES_ENDPOINT}?q=${encodeURIComponent(query)}&maxResults=${MAX_SCAN_MESSAGES}`;
+    // 3. Search the ENTIRE Gmail inbox using pagination.
+    // Gmail returns at most 100 messages per page, so keep requesting
+    // pages until there is no nextPageToken.
+    const query = "in:inbox";
 
-    const searchRes = await fetch(searchUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const messages: { id: string; threadId: string }[] = [];
+    let pageToken: string | undefined = undefined;
 
-    if (!searchRes.ok) {
-      throw new Error(`Gmail API message list failed with status ${searchRes.status}`);
-    }
+    do {
+      const params = new URLSearchParams({
+        q: query,
+        maxResults: "100",
+      });
 
-    const searchData = await searchRes.json();
-    const messages: { id: string; threadId: string }[] = searchData.messages || [];
+      if (pageToken) {
+        params.set("pageToken", pageToken);
+      }
+
+      const searchUrl = `${GMAIL_MESSAGES_ENDPOINT}?${params.toString()}`;
+
+      const searchRes = await fetch(searchUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (!searchRes.ok) {
+        throw new Error(
+          `Gmail API message list failed with status ${searchRes.status}`,
+        );
+      }
+
+      const searchData = await searchRes.json();
+
+      if (Array.isArray(searchData.messages)) {
+        messages.push(...searchData.messages);
+      }
+
+      pageToken = searchData.nextPageToken || undefined;
+    } while (pageToken);
+
+    console.log(
+      `[subscription-scanner] Found ${messages.length} messages in Gmail inbox.`,
+    );
 
     for (const msgRef of messages) {
       scannedCount++;
@@ -271,17 +345,23 @@ export async function runGmailInboxScan(userId: string): Promise<{
       }
 
       // 5. Fetch message details
-      const msgRes = await fetch(`${GMAIL_MESSAGES_ENDPOINT}/${msgRef.id}?format=full`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const msgRes = await fetch(
+        `${GMAIL_MESSAGES_ENDPOINT}/${msgRef.id}?format=full`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
 
       if (!msgRes.ok) continue;
 
       const msgData = await msgRes.json();
-      const headers: { name: string; value: string }[] = msgData.payload?.headers || [];
+      const headers: { name: string; value: string }[] =
+        msgData.payload?.headers || [];
 
-      const subjectHeader = headers.find((h) => h.name.toLowerCase() === "subject")?.value || "";
-      const fromHeader = headers.find((h) => h.name.toLowerCase() === "from")?.value || "";
+      const subjectHeader =
+        headers.find((h) => h.name.toLowerCase() === "subject")?.value || "";
+      const fromHeader =
+        headers.find((h) => h.name.toLowerCase() === "from")?.value || "";
 
       const bodyText = decodeGmailBody(msgData.payload);
       const fullText = `Subject: ${subjectHeader}\nFrom: ${fromHeader}\n\n${bodyText}`;
@@ -290,7 +370,9 @@ export async function runGmailInboxScan(userId: string): Promise<{
       const parsed = await parseEmailContent(fullText);
       if (!parsed) continue;
 
-      const msgTimestamp = msgData.internalDate ? parseInt(msgData.internalDate, 10) : undefined;
+      const msgTimestamp = msgData.internalDate
+        ? parseInt(msgData.internalDate, 10)
+        : undefined;
       const computedRenewalDate = inferNextRenewalDate(
         parsed.renewal_date,
         parsed.billing_cycle,
@@ -338,7 +420,10 @@ export async function runGmailInboxScan(userId: string): Promise<{
           .single();
 
         if (insertSubErr || !newSub) {
-          console.error("[subscription-scanner] Sub insert error:", insertSubErr);
+          console.error(
+            "[subscription-scanner] Sub insert error:",
+            insertSubErr,
+          );
           continue;
         }
 
@@ -393,7 +478,10 @@ export async function runGmailInboxScan(userId: string): Promise<{
       .eq("id", userId);
 
     if (isTokenExpired) {
-      logAuditEvent("gmail_token_refresh_failed", { userId, error: error.message });
+      logAuditEvent("gmail_token_refresh_failed", {
+        userId,
+        error: error.message,
+      });
       return {
         scannedCount,
         newSubscriptionsCount,
@@ -404,6 +492,11 @@ export async function runGmailInboxScan(userId: string): Promise<{
 
     logAuditEvent("gmail_scan_failed", { userId, error: error.message });
 
-    return { scannedCount, newSubscriptionsCount, updatedSubscriptionsCount, error: error.message };
+    return {
+      scannedCount,
+      newSubscriptionsCount,
+      updatedSubscriptionsCount,
+      error: error.message,
+    };
   }
 }

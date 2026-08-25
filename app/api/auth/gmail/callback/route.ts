@@ -109,12 +109,9 @@ export async function GET(request: Request) {
     // 5. Encrypt refresh token with AES-256-GCM
     const encryptedRefreshToken = encryptToken(refreshToken);
 
-    // 6. Resolve the EXISTING canonical Telegram user.
-    // IMPORTANT:
+    // 6. Resolve the EXISTING canonical user.
     // Gmail OAuth must NEVER create a new users row.
-    // The Telegram /start flow creates the canonical user first.
-    // OAuth only attaches Gmail credentials to that existing row.
-
+    // The OAuth state records which canonical users.id started this flow.
     let targetUserId: string | null = stateRecord.user_id || null;
 
     if (targetUserId) {
@@ -128,14 +125,6 @@ export async function GET(request: Request) {
       if (canonicalLookupError || !canonicalUser) {
         throw new Error("OAuth state points to a missing user.");
       }
-
-      // Make absolutely sure this is the Telegram user that started OAuth.
-      if (
-        stateRecord.telegram_chat_id &&
-        canonicalUser.telegram_chat_id !== stateRecord.telegram_chat_id
-      ) {
-        throw new Error("OAuth state/user mismatch.");
-      }
     }
 
     // Fallback only if the OAuth state somehow has no user_id.
@@ -146,21 +135,17 @@ export async function GET(request: Request) {
         .eq("telegram_chat_id", stateRecord.telegram_chat_id)
         .maybeSingle();
 
-      if (telegramLookupError) {
-        throw telegramLookupError;
-      }
-
-      if (telegramUser) {
-        targetUserId = telegramUser.id;
-      }
+      if (telegramLookupError) throw telegramLookupError;
+      if (telegramUser) targetUserId = telegramUser.id;
     }
 
     if (!targetUserId) {
       throw new Error(
-        "No canonical Telegram user found for this Gmail OAuth request.",
+        "No canonical user found for this Gmail OAuth request.",
       );
     }
 
+    // 7. Update the canonical user with Gmail credentials
     const updatePayload: Record<string, any> = {
       gmail_connected: true,
       tracking_mode: "GMAIL",
@@ -172,29 +157,6 @@ export async function GET(request: Request) {
       updated_at: new Date().toISOString(),
     };
 
-    // 7. Check if an orphan record exists with this email or telegram_chat_id and reconcile
-    if (stateRecord.telegram_chat_id) {
-      const { data: orphanUser } = await supabase
-        .from("users")
-        .select("id")
-        .eq("telegram_chat_id", stateRecord.telegram_chat_id)
-        .neq("id", targetUserId)
-        .maybeSingle();
-
-      if (orphanUser) {
-        await supabase
-          .from("subscriptions")
-          .update({ user_id: targetUserId })
-          .eq("user_id", orphanUser.id);
-        await supabase
-          .from("subscription_evidence")
-          .update({ user_id: targetUserId })
-          .eq("user_id", orphanUser.id);
-        await supabase.from("users").delete().eq("id", orphanUser.id);
-      }
-    }
-
-    // 7. Update the canonical user associated with this OAuth state
     const isProAdmin = gmailEmail.toLowerCase() === "vj2754108@gmail.com";
     if (isProAdmin) {
       updatePayload.plan = "pro";
@@ -215,7 +177,7 @@ export async function GET(request: Request) {
       telegramChatId: stateRecord.telegram_chat_id || undefined,
     });
 
-    // 9. Notify user in Telegram if telegram_chat_id is present on state or user
+    // 8. Notify user in Telegram if telegram_chat_id is present
     const { data: targetUserRecord } = await supabase
       .from("users")
       .select("telegram_chat_id")
@@ -276,7 +238,7 @@ export async function GET(request: Request) {
       }
     }
 
-    // 10. Render success page
+    // 9. Render success page
     return new NextResponse(
       renderHtmlResponse({
         title: "Connected Successfully",

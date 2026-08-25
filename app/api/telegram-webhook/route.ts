@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { generateGoogleAuthUrl, revokeGoogleToken } from "@/lib/gmail-oauth";
 import { runGmailInboxScan } from "@/lib/subscription-scanner";
 import { logAuditEvent } from "@/lib/audit-logger";
+import { resolveCanonicalUser } from "@/lib/public-user";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,84 +17,16 @@ const supabase = createClient(
   },
 );
 
-function generateAlias(length = 6) {
-  const characters = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let alias = "";
-  for (let i = 0; i < length; i++) {
-    alias += characters.charAt(Math.floor(Math.random() * characters.length));
-  }
-  return alias;
-}
-
-async function generateUniqueAlias() {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const alias = generateAlias();
-    const { data, error } = await supabase
-      .from("users")
-      .select("id")
-      .eq("forwarding_alias", alias)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data) return alias;
-  }
-  throw new Error("Could not generate a unique alias");
-}
-
 /**
  * Safely resolves or creates the Telegram user record.
- * Guarantees exactly ONE canonical record per user.
+ * Delegates to the universal resolveCanonicalUser engine so that
+ * ONE REAL HUMAN = ONE public.users ROW across all identity columns.
  */
 async function getOrCreateTelegramUser(chatId: number, username?: string) {
-  const { data: existingUser } = await supabase
-    .from("users")
-    .select("*")
-    .eq("telegram_chat_id", chatId)
-    .maybeSingle();
-
-  if (existingUser) {
-    return existingUser;
-  }
-
-  const alias = await generateUniqueAlias();
-  const { data: newUser, error: insertErr } = await supabase
-    .from("users")
-    .insert({
-      telegram_chat_id: chatId,
-      telegram_username: username || null,
-      forwarding_alias: alias,
-      plan: "free",
-    })
-    .select("*")
-    .single();
-
-  if (newUser) {
-    return newUser;
-  }
-
-  if (insertErr) {
-    console.error("[telegram-webhook] User insert error:", insertErr);
-  }
-
-  // Fallback in case of concurrent insert
-  const { data: fallbackUser } = await supabase
-    .from("users")
-    .select("*")
-    .eq("telegram_chat_id", chatId)
-    .maybeSingle();
-
-  return (
-    fallbackUser || {
-      id: "temp",
-      forwarding_alias: alias,
-      telegram_chat_id: chatId,
-      plan: "free",
-      auth_user_id: null,
-      gmail_connected: false,
-      gmail_email: null,
-      tracking_mode: "PRIVATE_EMAIL",
-    }
-  );
+  return resolveCanonicalUser({
+    telegramChatId: chatId,
+    telegramUsername: username,
+  });
 }
 
 /**
