@@ -66,7 +66,7 @@ function validateAndNormalizeParsedOutput(
     if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
       renewalDate = rawDate;
     } else if (/^\d{2}-\d{2}$/.test(rawDate)) {
-      renewalDate = `${new Date().getFullYear()}-${rawDate}`;
+      renewalDate = rawDate;
     }
   }
 
@@ -304,12 +304,21 @@ export async function runGmailInboxScan(userId: string): Promise<{
       const searchUrl = `${GMAIL_MESSAGES_ENDPOINT}?${params.toString()}`;
 
       const searchRes = await fetch(searchUrl, {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
       });
 
       if (!searchRes.ok) {
+        const errorBody = await searchRes.text().catch(() => "");
+
+        console.error("[subscription-scanner] Gmail API message list failed:", {
+          status: searchRes.status,
+          body: errorBody,
+        });
+
         throw new Error(
-          `Gmail API message list failed with status ${searchRes.status}`,
+          `Gmail API message list failed with status ${searchRes.status}: ${errorBody || "No error details returned by Google."}`,
         );
       }
 
