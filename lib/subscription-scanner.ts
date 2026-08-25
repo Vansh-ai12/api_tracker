@@ -6,8 +6,6 @@ import Groq from "groq-sdk";
 const GMAIL_MESSAGES_ENDPOINT =
   "https://gmail.googleapis.com/gmail/v1/users/me/messages";
 
-  
-
 export interface ExtractedSubscription {
   service_name: string;
   domain?: string;
@@ -445,15 +443,29 @@ export async function runGmailInboxScan(userId: string): Promise<{
       }
     }
 
-    // 9. Update status to completed
-    await supabase
+    // 9. Update status to completed and persist the exact scan completion time
+    const scanCompletedAt = new Date().toISOString();
+
+    const { error: scanCompleteUpdateError } = await supabase
       .from("users")
       .update({
         gmail_last_scan_status: "completed",
-        gmail_last_scan_at: new Date().toISOString(),
+        gmail_last_scan_at: scanCompletedAt,
         gmail_last_error: null,
+        updated_at: scanCompletedAt,
       })
       .eq("id", userId);
+
+    if (scanCompleteUpdateError) {
+      console.error(
+        "[subscription-scanner] Failed to save last scan timestamp:",
+        scanCompleteUpdateError,
+      );
+
+      throw new Error(
+        `Failed to save Gmail scan completion state: ${scanCompleteUpdateError.message}`,
+      );
+    }
 
     logAuditEvent("gmail_scan_completed", {
       userId,

@@ -20,7 +20,11 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
 
   async function fetchLatestStatus() {
     try {
-      const res = await fetch("/api/user/gmail");
+      const res = await fetch("/api/user/gmail", {
+        method: "GET",
+        cache: "no-store",
+      });
+
       if (res.ok) {
         const data = await res.json();
         setStatus(data);
@@ -53,7 +57,11 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
   }
 
   async function handleDisconnect() {
-    if (!confirm("Are you sure you want to disconnect Gmail? This will revoke access and delete your stored credentials.")) {
+    if (
+      !confirm(
+        "Are you sure you want to disconnect Gmail? This will revoke access and delete your stored credentials.",
+      )
+    ) {
       return;
     }
     setLoading(true);
@@ -80,18 +88,30 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
   async function handleScan() {
     setLoading(true);
     setMessage("Scanning inbox for subscription emails...");
+
     try {
       const res = await fetch("/api/user/gmail", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "scan" }),
+        cache: "no-store",
       });
+
       const data = await res.json();
+
       if (res.ok && data.success) {
-        setMessage(`Scan complete! ${data.newSubscriptionsCount || 0} new subscriptions found.`);
+        setMessage(
+          `Scan complete! ${data.newSubscriptionsCount || 0} new subscriptions found.`,
+        );
+
+        // Give the database a moment to commit the completed scan state,
+        // then retrieve the fresh Gmail status.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
         await fetchLatestStatus();
       } else {
         setMessage(data.error || "Scan failed.");
+        await fetchLatestStatus();
       }
     } catch {
       setMessage("Scan failed due to network error.");
@@ -108,33 +128,67 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
         <div className="flex items-start gap-3.5">
           <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-100 dark:border-emerald-900/50">
             {isGmail ? (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                strokeWidth="2"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                />
               </svg>
             ) : (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                strokeWidth="2"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                />
               </svg>
             )}
           </div>
 
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <span className={`h-2 w-2 rounded-full ${isGmail ? "bg-emerald-500 animate-pulse" : "bg-blue-500"}`} />
+              <span
+                className={`h-2 w-2 rounded-full ${isGmail ? "bg-emerald-500 animate-pulse" : "bg-blue-500"}`}
+              />
               <h3 className="font-bold text-sm text-[#0a0a0a] dark:text-white">
-                {isGmail ? "🟢 Gmail Tracking Active" : "🔒 Private Inbox Mode Active"}
+                {isGmail
+                  ? "🟢 Gmail Tracking Active"
+                  : "🔒 Private Inbox Mode Active"}
               </h3>
             </div>
 
             {isGmail ? (
               <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                Connected to <strong className="text-gray-800 dark:text-gray-200">{status.gmail_email}</strong>. Read-only permissions active. Last scan:{" "}
-                {status.gmail_last_scan_at ? new Date(status.gmail_last_scan_at).toLocaleString("en-IN") : "Never"}.
+                Connected to{" "}
+                <strong className="text-gray-800 dark:text-gray-200">
+                  {status.gmail_email}
+                </strong>
+                . Read-only permissions active. Last scan:{" "}
+                {status.gmail_last_scan_at
+                  ? new Date(status.gmail_last_scan_at).toLocaleString("en-IN")
+                  : "Never"}
+                .
               </p>
             ) : (
               <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
                 No Gmail access. Forward subscription receipts to{" "}
-                <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{status.forwarding_alias}@unsub.app</strong> to auto-track, or connect Gmail below.
+                <strong className="text-emerald-600 dark:text-emerald-400 font-mono">
+                  {status.forwarding_alias}@unsub.app
+                </strong>{" "}
+                to auto-track, or connect Gmail below.
               </p>
             )}
           </div>
@@ -146,7 +200,9 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
               <button
                 type="button"
                 onClick={handleScan}
-                disabled={loading || status.gmail_last_scan_status === "scanning"}
+                disabled={
+                  loading || status.gmail_last_scan_status === "scanning"
+                }
                 className="px-4 py-2 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {loading ? "Working..." : "📬 Scan Inbox"}
