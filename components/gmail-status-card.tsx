@@ -165,7 +165,7 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
               />
               <h3 className="font-bold text-sm text-[#0a0a0a] dark:text-white">
                 {isGmail
-                  ? "🟢 Gmail Tracking Active"
+                  ? "Gmail Tracking Active"
                   : "🔒 Private Inbox Mode Active"}
               </h3>
             </div>

@@ -251,24 +251,55 @@ export async function runGmailInboxScan(userId: string): Promise<{
     };
   }
 
+  // 1. Check & acquire scan lock.
+  // Recover a stale lock if the previous scan crashed or was terminated.
   if (user.gmail_last_scan_status === "scanning") {
-    return {
-      scannedCount: 0,
-      newSubscriptionsCount: 0,
-      updatedSubscriptionsCount: 0,
-      error: "A scan is already in progress.",
-    };
+    const { data: lockUser } = await supabase
+      .from("users")
+      .select("updated_at")
+      .eq("id", userId)
+      .single();
+
+    const lockAgeMs = lockUser?.updated_at
+      ? Date.now() - new Date(lockUser.updated_at).getTime()
+      : 0;
+
+    // A scan should never remain locked indefinitely.
+    // Treat locks older than 10 minutes as stale.
+    if (lockAgeMs < 10 * 60 * 1000) {
+      return {
+        scannedCount: 0,
+        newSubscriptionsCount: 0,
+        updatedSubscriptionsCount: 0,
+        error: "A scan is already in progress.",
+      };
+    }
+
+    console.warn(
+      `[subscription-scanner] Recovering stale Gmail scan lock for user ${userId}.`,
+    );
   }
 
-  // Set lock state
-  await supabase
+  // Acquire the lock.
+  const { data: lockResult, error: lockError } = await supabase
     .from("users")
     .update({
       gmail_last_scan_status: "scanning",
       gmail_last_error: null,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", userId);
+    .eq("id", userId)
+    .select("id")
+    .single();
+
+  if (lockError || !lockResult) {
+    return {
+      scannedCount: 0,
+      newSubscriptionsCount: 0,
+      updatedSubscriptionsCount: 0,
+      error: "Could not start Gmail scan.",
+    };
+  }
 
   logAuditEvent("gmail_scan_started", {
     userId,
@@ -303,11 +334,21 @@ export async function runGmailInboxScan(userId: string): Promise<{
 
       const searchUrl = `${GMAIL_MESSAGES_ENDPOINT}?${params.toString()}`;
 
-      const searchRes = await fetch(searchUrl, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+
+      let searchRes: Response;
+
+      try {
+        searchRes = await fetch(searchUrl, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
 
       if (!searchRes.ok) {
         const errorBody = await searchRes.text().catch(() => "");
