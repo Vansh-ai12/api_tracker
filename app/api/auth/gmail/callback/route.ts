@@ -229,6 +229,18 @@ export async function GET(request: Request) {
             "[gmail-callback] Telegram notification failed:",
             tgErr,
           );
+          logAuditEvent("api_telegram_send", {
+            telegramChatId: notifyChatId,
+            apiStatus: tgRes.status,
+            apiOperation: "sendMessage",
+            error: "Telegram send failed",
+          });
+        } else {
+          logAuditEvent("api_telegram_send", {
+            telegramChatId: notifyChatId,
+            apiStatus: tgRes.status,
+            apiOperation: "sendMessage",
+          });
         }
       } catch (tgError) {
         console.error(

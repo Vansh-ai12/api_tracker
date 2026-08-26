@@ -9,6 +9,7 @@ interface GmailStatusProps {
     gmail_email: string | null;
     gmail_last_scan_at: string | null;
     gmail_last_scan_status: string;
+    gmail_last_error: string | null;
     forwarding_alias: string;
   };
 }
@@ -176,11 +177,22 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
                 <strong className="text-gray-800 dark:text-gray-200">
                   {status.gmail_email}
                 </strong>
-                . Read-only permissions active. Last scan:{" "}
-                {status.gmail_last_scan_at
-                  ? new Date(status.gmail_last_scan_at).toLocaleString("en-IN")
-                  : "Never"}
-                .
+                . Read-only permissions active.{" "}
+                {status.gmail_last_scan_status === "scanning" ? (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">Scanning inbox...</span>
+                ) : status.gmail_last_scan_status === "failed" ? (
+                  <span className="text-rose-600 dark:text-rose-400 font-medium">Last scan failed</span>
+                ) : status.gmail_last_scan_at ? (
+                  <span>Last scan: {new Date(status.gmail_last_scan_at).toLocaleString("en-IN")}</span>
+                ) : (
+                  <span className="text-gray-400">Never scanned</span>
+                )}
+                {status.gmail_last_error && status.gmail_last_scan_status === "failed" && (
+                  <span className="block mt-1 text-rose-500 dark:text-rose-400 text-[10px]">
+                    {status.gmail_last_error.substring(0, 60)}
+                    {status.gmail_last_error.length > 60 ? "..." : ""}
+                  </span>
+                )}
               </p>
             ) : (
               <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">

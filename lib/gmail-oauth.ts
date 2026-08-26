@@ -124,8 +124,18 @@ export async function getFreshAccessToken(encryptedRefreshToken: string): Promis
     if (data.error === "invalid_grant" || (typeof errorMsg === "string" && errorMsg.toLowerCase().includes("revoked"))) {
       (err as any).isTokenExpired = true;
     }
+    logAuditEvent("api_gmail_token_refresh", {
+      apiStatus: response.status,
+      apiOperation: "refresh",
+      error: errorMsg,
+    });
     throw err;
   }
+
+  logAuditEvent("api_gmail_token_refresh", {
+    apiStatus: response.status,
+    apiOperation: "refresh",
+  });
 
   if (!data.access_token) {
     throw new Error("[gmail-oauth] No access_token returned during token refresh.");

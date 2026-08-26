@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { sendPushToUser } from "@/lib/push";
 import { runGmailInboxScan } from "@/lib/subscription-scanner";
+import { logAuditEvent } from "@/lib/audit-logger";
 
 async function sendTelegramReminder(
   chatId: number,
@@ -12,7 +13,7 @@ async function sendTelegramReminder(
   if (!token) return;
 
   try {
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -28,8 +29,28 @@ async function sendTelegramReminder(
         },
       }),
     });
+
+    if (!tgRes.ok) {
+      logAuditEvent("api_telegram_send", {
+        telegramChatId: chatId,
+        apiStatus: tgRes.status,
+        apiOperation: "sendMessage",
+        error: "Telegram reminder failed",
+      });
+    } else {
+      logAuditEvent("api_telegram_send", {
+        telegramChatId: chatId,
+        apiStatus: tgRes.status,
+        apiOperation: "sendMessage",
+      });
+    }
   } catch (err) {
     console.error("[reminders] Error sending Telegram reminder:", err);
+    logAuditEvent("api_telegram_send", {
+      telegramChatId: chatId,
+      apiOperation: "sendMessage",
+      error: "Telegram reminder exception",
+    });
   }
 }
 

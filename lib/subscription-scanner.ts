@@ -232,7 +232,7 @@ export async function runGmailInboxScan(userId: string): Promise<{
   const { data: user, error: userError } = await supabase
     .from("users")
     .select(
-      "gmail_connected, gmail_refresh_token, gmail_last_scan_status, telegram_chat_id",
+      "gmail_connected, gmail_refresh_token, gmail_last_scan_status, gmail_last_scan_at, telegram_chat_id",
     )
     .eq("id", userId)
     .single();
@@ -314,66 +314,80 @@ export async function runGmailInboxScan(userId: string): Promise<{
     // 2. Obtain fresh in-memory access token
     const accessToken = await getFreshAccessToken(user.gmail_refresh_token);
 
-    // 3. Search the ENTIRE Gmail inbox using pagination.
-    // Gmail returns at most 100 messages per page, so keep requesting
-    // pages until there is no nextPageToken.
-    const query = "in:inbox";
-
+    // 3. Incremental scan: only search recent messages since last scan
+    // Limit to 50 messages per run to avoid overwhelming the system
     const messages: { id: string; threadId: string }[] = [];
-    let pageToken: string | undefined = undefined;
+    
+    // Build query to get only recent messages
+    // If we have a last scan time, get messages since then (max 50)
+    // Otherwise, get the 50 most recent messages
+    let query = "in:inbox (subscription OR receipt OR invoice OR renewal OR payment)";
+    const maxResults = "50";
 
-    do {
-      const params = new URLSearchParams({
-        q: query,
-        maxResults: "100",
+    // Add date filter if we have a last successful scan
+    if (user.gmail_last_scan_at) {
+      const lastScanDate = new Date(user.gmail_last_scan_at);
+      const dateStr = lastScanDate.toISOString().split('T')[0];
+      query += ` after:${dateStr}`;
+    }
+
+    const params = new URLSearchParams({
+      q: query,
+      maxResults: maxResults,
+    });
+
+    const searchUrl = `${GMAIL_MESSAGES_ENDPOINT}?${params.toString()}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+
+    let searchRes: Response;
+
+    try {
+      searchRes = await fetch(searchUrl, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!searchRes.ok) {
+      const errorBody = await searchRes.text().catch(() => "");
+
+      console.error("[subscription-scanner] Gmail API message list failed:", {
+        status: searchRes.status,
+        body: errorBody,
       });
 
-      if (pageToken) {
-        params.set("pageToken", pageToken);
-      }
+      logAuditEvent("api_gmail_message_list", {
+        userId,
+        apiStatus: searchRes.status,
+        apiOperation: "list",
+        error: `Gmail API failed: ${searchRes.status}`,
+      });
 
-      const searchUrl = `${GMAIL_MESSAGES_ENDPOINT}?${params.toString()}`;
+      throw new Error(
+        `Gmail API message list failed with status ${searchRes.status}: ${errorBody || "No error details returned by Google."}`,
+      );
+    }
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
+    logAuditEvent("api_gmail_message_list", {
+      userId,
+      apiStatus: searchRes.status,
+      apiOperation: "list",
+    });
 
-      let searchRes: Response;
+    const searchData = await searchRes.json();
 
-      try {
-        searchRes = await fetch(searchUrl, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
-
-      if (!searchRes.ok) {
-        const errorBody = await searchRes.text().catch(() => "");
-
-        console.error("[subscription-scanner] Gmail API message list failed:", {
-          status: searchRes.status,
-          body: errorBody,
-        });
-
-        throw new Error(
-          `Gmail API message list failed with status ${searchRes.status}: ${errorBody || "No error details returned by Google."}`,
-        );
-      }
-
-      const searchData = await searchRes.json();
-
-      if (Array.isArray(searchData.messages)) {
-        messages.push(...searchData.messages);
-      }
-
-      pageToken = searchData.nextPageToken || undefined;
-    } while (pageToken);
+    if (Array.isArray(searchData.messages)) {
+      messages.push(...searchData.messages);
+    }
 
     console.log(
-      `[subscription-scanner] Found ${messages.length} messages in Gmail inbox.`,
+      `[subscription-scanner] Found ${messages.length} recent messages matching subscription keywords.`,
     );
 
     for (const msgRef of messages) {
@@ -400,7 +414,21 @@ export async function runGmailInboxScan(userId: string): Promise<{
         },
       );
 
-      if (!msgRes.ok) continue;
+      if (!msgRes.ok) {
+        logAuditEvent("api_gmail_message_get", {
+          userId,
+          apiStatus: msgRes.status,
+          apiOperation: "get",
+          error: `Gmail message get failed: ${msgRes.status}`,
+        });
+        continue;
+      }
+
+      logAuditEvent("api_gmail_message_get", {
+        userId,
+        apiStatus: msgRes.status,
+        apiOperation: "get",
+      });
 
       const msgData = await msgRes.json();
       const headers: { name: string; value: string }[] =
@@ -416,7 +444,19 @@ export async function runGmailInboxScan(userId: string): Promise<{
 
       // 6. Parse subscription details with AI
       const parsed = await parseEmailContent(fullText);
-      if (!parsed) continue;
+      if (!parsed) {
+        logAuditEvent("api_ai_parse", {
+          userId,
+          apiOperation: "parse",
+          error: "AI parsing returned null",
+        });
+        continue;
+      }
+
+      logAuditEvent("api_ai_parse", {
+        userId,
+        apiOperation: "parse",
+      });
 
       const msgTimestamp = msgData.internalDate
         ? parseInt(msgData.internalDate, 10)

@@ -6,6 +6,9 @@ import { LogoutButton } from "@/components/logout-button";
 import { TelegramConnectCard } from "@/components/telegram-connect-card";
 import { GmailStatusCard } from "@/components/gmail-status-card";
 import { PlanCard } from "@/components/plan-card";
+import { AddSubscriptionButton } from "@/components/add-subscription-button";
+import { ApiIntegrationsCard } from "@/components/api-integrations-card";
+import { SubscriptionCatalog } from "@/components/subscription-catalog";
 import { redirect } from "next/navigation";
 
 // Force dynamic rendering — reads cookies & database on every request
@@ -24,22 +27,51 @@ type Subscription = {
   billing_cycle: string | null;
   renewal_date: string | null;
   status: string;
+  source: string | null;
+  created_at: string;
 };
 
 async function getSubscriptions(userId: string): Promise<Subscription[]> {
   const supabase = createServiceClient();
-  const { data, error } = await supabase
+  
+  // Get subscriptions with their source from evidence table
+  const { data: subscriptions, error: subError } = await supabase
     .from("subscriptions")
-    .select("id, service_name, amount, currency, billing_cycle, renewal_date, status")
+    .select("id, service_name, amount, currency, billing_cycle, renewal_date, status, created_at")
     .eq("user_id", userId)
     .order("renewal_date", { ascending: true, nullsFirst: false });
 
-  if (error) {
-    console.error("[dashboard] Failed to fetch subscriptions:", error);
+  if (subError) {
+    console.error("[dashboard] Failed to fetch subscriptions:", subError);
     return [];
   }
 
-  return data ?? [];
+  if (!subscriptions || subscriptions.length === 0) {
+    return [];
+  }
+
+  // Get evidence for each subscription to determine source
+  const subscriptionIds = subscriptions.map(s => s.id);
+  const { data: evidence } = await supabase
+    .from("subscription_evidence")
+    .select("subscription_id, source")
+    .in("subscription_id", subscriptionIds);
+
+  // Create a map of subscription_id to source
+  const sourceMap = new Map<string, string>();
+  if (evidence) {
+    evidence.forEach(e => {
+      if (!sourceMap.has(e.subscription_id)) {
+        sourceMap.set(e.subscription_id, e.source);
+      }
+    });
+  }
+
+  // Add source to each subscription
+  return subscriptions.map(sub => ({
+    ...sub,
+    source: sourceMap.get(sub.id) || null,
+  }));
 }
 
 async function getTelegramConnection(userId: string): Promise<boolean> {
@@ -62,7 +94,7 @@ async function getUserGmailStatus(userId: string) {
   const supabase = createServiceClient();
   const { data } = await supabase
     .from("users")
-    .select("tracking_mode, gmail_connected, gmail_email, gmail_last_scan_at, gmail_last_scan_status, forwarding_alias")
+    .select("tracking_mode, gmail_connected, gmail_email, gmail_last_scan_at, gmail_last_scan_status, gmail_last_error, forwarding_alias")
     .eq("id", userId)
     .maybeSingle();
 
@@ -72,6 +104,7 @@ async function getUserGmailStatus(userId: string) {
     gmail_email: data?.gmail_email || null,
     gmail_last_scan_at: data?.gmail_last_scan_at || null,
     gmail_last_scan_status: data?.gmail_last_scan_status || "idle",
+    gmail_last_error: data?.gmail_last_error || null,
     forwarding_alias: data?.forwarding_alias || "alias",
   };
 }
@@ -108,6 +141,8 @@ function SubscriptionCard({ sub }: { sub: Subscription }) {
 
   const initialLetter = sub.service_name ? sub.service_name.charAt(0).toUpperCase() : "S";
 
+  const sourceLabel = sub.source === "GMAIL" ? "Gmail" : sub.source === "PRIVATE_EMAIL" ? "Forwarded Email" : "Manual";
+
   return (
     <div className="bg-white dark:bg-[#141414] rounded-2xl border border-gray-100 dark:border-gray-800/80 p-5 flex flex-col justify-between gap-4 shadow-sm hover:shadow-md dark:hover:border-gray-700 transition-all group">
       <div className="flex items-center justify-between gap-3">
@@ -136,6 +171,15 @@ function SubscriptionCard({ sub }: { sub: Subscription }) {
           <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-0.5">Renews On</p>
           <p className="font-semibold text-[#0a0a0a] dark:text-gray-200">{renewalLabel}</p>
         </div>
+      </div>
+
+      <div className="flex items-center justify-between pt-2 text-xs">
+        <span className="text-gray-400 dark:text-gray-500">
+          Source: <span className="font-medium text-gray-600 dark:text-gray-400">{sourceLabel}</span>
+        </span>
+        <span className="text-gray-400 dark:text-gray-500">
+          Added: {new Date(sub.created_at).toLocaleDateString("en-IN")}
+        </span>
       </div>
     </div>
   );
@@ -219,6 +263,9 @@ export default async function DashboardPage() {
 
         {/* Live Gmail / Tracking Mode Status Banner */}
         <GmailStatusCard initialStatus={gmailStatus} />
+
+        {/* API & Integrations Catalog */}
+        <ApiIntegrationsCard />
 
         {/* Analytics Highlights Grid (4 Cards) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -331,9 +378,12 @@ export default async function DashboardPage() {
             <h2 className="text-xl font-bold tracking-tight text-[#0a0a0a] dark:text-white">
               Tracked Subscriptions
             </h2>
-            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
-              {subscriptions.length} total recorded
-            </span>
+            <div className="flex items-center gap-3">
+              <AddSubscriptionButton />
+              <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
+                {subscriptions.length} total recorded
+              </span>
+            </div>
           </div>
 
           {subscriptions.length === 0 ? (
@@ -386,6 +436,9 @@ export default async function DashboardPage() {
             </div>
           )}
         </section>
+
+        {/* Complete Subscription Catalog */}
+        <SubscriptionCatalog subscriptions={subscriptions} />
       </main>
     </div>
   );

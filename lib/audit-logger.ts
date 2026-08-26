@@ -14,7 +14,14 @@ export type AuditEventType =
   | "gmail_token_refresh_failed"
   | "private_mode_enabled"
   | "email_webhook_received"
-  | "email_webhook_failed";
+  | "email_webhook_failed"
+  | "cron_gmail_scan_completed"
+  | "cron_gmail_scan_failed"
+  | "api_gmail_message_list"
+  | "api_gmail_message_get"
+  | "api_gmail_token_refresh"
+  | "api_ai_parse"
+  | "api_telegram_send";
 
 export function logAuditEvent(
   event: AuditEventType,
@@ -24,6 +31,8 @@ export function logAuditEvent(
     emailDomain?: string;
     subscriptionCount?: number;
     error?: string;
+    apiStatus?: number;
+    apiOperation?: string;
   }
 ) {
   const timestamp = new Date().toISOString();
@@ -34,6 +43,8 @@ export function logAuditEvent(
     telegramChatId: metadata?.telegramChatId || null,
     subscriptionCount: metadata?.subscriptionCount ?? null,
     error: metadata?.error ? metadata.error.substring(0, 200) : null,
+    apiStatus: metadata?.apiStatus || null,
+    apiOperation: metadata?.apiOperation || null,
   };
 
   console.log(`[AUDIT] ${JSON.stringify(safeLog)}`);
