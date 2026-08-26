@@ -21,7 +21,10 @@ export type AuditEventType =
   | "api_gmail_message_get"
   | "api_gmail_token_refresh"
   | "api_ai_parse"
-  | "api_telegram_send";
+  | "api_telegram_send"
+  | "api_integration_sync_started"
+  | "api_integration_sync_completed"
+  | "api_integration_sync_failed";
 
 export function logAuditEvent(
   event: AuditEventType,

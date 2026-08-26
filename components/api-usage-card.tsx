@@ -19,6 +19,7 @@ interface ApiIntegration {
   last_synced_at: string | null;
   last_sync_status: string | null;
   last_sync_error: string | null;
+  next_sync_at: string | null;
 }
 
 interface ApiUsageCardProps {
@@ -29,6 +30,7 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
   const [integrations, setIntegrations] = useState<ApiIntegration[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (isPro) {
@@ -49,6 +51,32 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
       // Ignore errors
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSync(integrationId: string) {
+    if (syncingIds.has(integrationId)) return;
+
+    setSyncingIds((prev) => new Set(prev).add(integrationId));
+
+    try {
+      const res = await fetch(`/api/api-integrations/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ integration_id: integrationId }),
+      });
+
+      if (res.ok) {
+        await fetchIntegrations();
+      }
+    } catch {
+      // Ignore errors
+    } finally {
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(integrationId);
+        return next;
+      });
     }
   }
 
@@ -84,6 +112,41 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
       case "near-limit": return "Near limit";
       case "approaching": return "Approaching limit";
       default: return "Within limit";
+    }
+  };
+
+  const getSyncStatus = (integration: ApiIntegration) => {
+    if (syncingIds.has(integration.id)) return "syncing";
+    if (integration.last_sync_status === "syncing") return "syncing";
+    if (integration.last_sync_status === "failed") return "failed";
+    if (integration.last_synced_at) return "synced";
+    return "never";
+  };
+
+  const getSyncStatusText = (status: string, integration: ApiIntegration) => {
+    switch (status) {
+      case "syncing": return "Syncing...";
+      case "failed": return integration.last_sync_error || "Sync failed";
+      case "synced":
+        if (!integration.last_synced_at) return "Never synced";
+        const lastSync = new Date(integration.last_synced_at as string);
+        const now = new Date();
+        const diffMins = Math.floor((now.getTime() - lastSync.getTime()) / 60000);
+        if (diffMins < 1) return "Just synced";
+        if (diffMins < 60) return `${diffMins}m ago`;
+        const diffHours = Math.floor(diffMins / 60);
+        if (diffHours < 24) return `${diffHours}h ago`;
+        return lastSync.toLocaleDateString("en-IN");
+      case "never": return "Never synced";
+      default: return status;
+    }
+  };
+
+  const getSyncStatusColor = (status: string) => {
+    switch (status) {
+      case "syncing": return "text-blue-600 dark:text-blue-400";
+      case "failed": return "text-rose-600 dark:text-rose-400";
+      default: return "text-emerald-600 dark:text-emerald-400";
     }
   };
 
@@ -159,6 +222,7 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
             const remaining = integration.usage_limit && integration.usage_current
               ? integration.usage_limit - integration.usage_current
               : null;
+            const syncStatus = getSyncStatus(integration);
 
             return (
               <div
@@ -171,7 +235,7 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
                       {integration.service_name}
                     </h4>
                     <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">
-                      {integration.provider} • {integration.connection_type === "connected" ? "Connected" : "Manual"}
+                      {integration.provider} • {integration.connection_type === "automatic" ? "Connected" : "Manual"}
                     </p>
                   </div>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${getWarningColor(warningLevel)}`}>
@@ -227,14 +291,30 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
                   </div>
                 )}
 
-                <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-gray-500">
-                  {integration.reset_at && (
-                    <span>Reset: {new Date(integration.reset_at).toLocaleDateString("en-IN", { month: "short", day: "numeric" })}</span>
-                  )}
-                  {integration.last_synced_at && (
-                    <span>Last synced: {new Date(integration.last_synced_at).toLocaleDateString("en-IN")}</span>
-                  )}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-[10px] text-gray-400 dark:text-gray-500">
+                    {integration.reset_at && (
+                      <span>Reset: {new Date(integration.reset_at).toLocaleDateString("en-IN", { month: "short", day: "numeric" })}</span>
+                    )}
+                  </div>
+                  <div className="text-[10px] font-medium">
+                    <span className={getSyncStatusColor(syncStatus)}>
+                      {syncStatus === "syncing" && "⟳ "}
+                      {getSyncStatusText(syncStatus, integration)}
+                    </span>
+                  </div>
                 </div>
+
+                {integration.connection_type === "automatic" && (
+                  <button
+                    type="button"
+                    onClick={() => handleSync(integration.id)}
+                    disabled={syncingIds.has(integration.id)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white text-xs font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    {syncingIds.has(integration.id) ? "Syncing..." : "Sync Now"}
+                  </button>
+                )}
               </div>
             );
           })}
