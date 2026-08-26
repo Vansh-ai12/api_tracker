@@ -5,8 +5,9 @@ import { encryptToken } from "@/lib/encryption";
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   const userId = await getSessionUserId();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -51,7 +52,7 @@ export async function PATCH(
     const { data: existing } = await supabase
       .from("api_integrations")
       .select("id")
-      .eq("id", params.id)
+      .eq("id", id)
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -84,7 +85,7 @@ export async function PATCH(
     const { data: updated, error: updateError } = await supabase
       .from("api_integrations")
       .update(updateData)
-      .eq("id", params.id)
+      .eq("id", id)
       .eq("user_id", userId)
       .select("id, service_name, provider, category, usage_current, usage_limit, usage_unit, credits_remaining, credit_limit, billing_period, reset_at, deadline_at, currency, cost, status, connection_type, last_synced_at, last_sync_status, last_sync_error, notes, created_at, updated_at")
       .single();
@@ -103,8 +104,9 @@ export async function PATCH(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   const userId = await getSessionUserId();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -127,7 +129,7 @@ export async function DELETE(
   const { data: existing } = await supabase
     .from("api_integrations")
     .select("id")
-    .eq("id", params.id)
+    .eq("id", id)
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -138,7 +140,7 @@ export async function DELETE(
   const { error: deleteError } = await supabase
     .from("api_integrations")
     .delete()
-    .eq("id", params.id)
+    .eq("id", id)
     .eq("user_id", userId);
 
   if (deleteError) {
