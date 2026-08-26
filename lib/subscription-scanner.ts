@@ -309,6 +309,7 @@ export async function runGmailInboxScan(userId: string): Promise<{
   let scannedCount = 0;
   let newSubscriptionsCount = 0;
   let updatedSubscriptionsCount = 0;
+  let scanError: string | null = null;
 
   try {
     // 2. Obtain fresh in-memory access token
@@ -369,9 +370,19 @@ export async function runGmailInboxScan(userId: string): Promise<{
         error: `Gmail API failed: ${searchRes.status}`,
       });
 
-      throw new Error(
-        `Gmail API message list failed with status ${searchRes.status}: ${errorBody || "No error details returned by Google."}`,
-      );
+      // Provide specific error messages for common Gmail API errors
+      let errorMessage = `Gmail API message list failed with status ${searchRes.status}`;
+      if (searchRes.status === 403) {
+        errorMessage = "Gmail permission denied. Please reconnect Gmail to grant read-only access.";
+      } else if (searchRes.status === 401) {
+        errorMessage = "Gmail authentication expired. Please reconnect Gmail.";
+      } else if (searchRes.status === 429) {
+        errorMessage = "Gmail rate limit exceeded. Please try again later.";
+      } else if (errorBody) {
+        errorMessage += `: ${errorBody}`;
+      }
+
+      throw new Error(errorMessage);
     }
 
     logAuditEvent("api_gmail_message_list", {
@@ -566,39 +577,51 @@ export async function runGmailInboxScan(userId: string): Promise<{
     return { scannedCount, newSubscriptionsCount, updatedSubscriptionsCount };
   } catch (error: any) {
     console.error("[subscription-scanner] Scan failed:", error);
+    scanError = error.message || "Unknown error";
+  } finally {
+    // Guaranteed cleanup: always update scan status
+    // This ensures we never leave the user permanently stuck in "scanning"
+    const finalStatus = scanError ? "failed" : "completed";
+    const updateData: any = {
+      gmail_last_scan_status: finalStatus,
+      updated_at: new Date().toISOString(),
+    };
 
-    const isTokenExpired = Boolean(error?.isTokenExpired);
-    const status = isTokenExpired ? "token_expired" : "failed";
+    // Only update gmail_last_scan_at on successful completion
+    if (!scanError) {
+      updateData.gmail_last_scan_at = new Date().toISOString();
+      updateData.gmail_last_error = null;
+    } else {
+      updateData.gmail_last_error = scanError;
+    }
+
+    // Handle token expiration specifically
+    const isTokenExpired = scanError?.toLowerCase().includes("token") || scanError?.toLowerCase().includes("expired");
+    if (isTokenExpired) {
+      updateData.gmail_connected = false;
+    }
 
     await supabase
       .from("users")
-      .update({
-        gmail_last_scan_status: status,
-        gmail_connected: isTokenExpired ? false : undefined,
-        gmail_last_error: error.message,
-      })
+      .update(updateData)
       .eq("id", userId);
 
-    if (isTokenExpired) {
-      logAuditEvent("gmail_token_refresh_failed", {
-        userId,
-        error: error.message,
-      });
-      return {
-        scannedCount,
-        newSubscriptionsCount,
-        updatedSubscriptionsCount,
-        error: "TOKEN_EXPIRED",
-      };
+    if (scanError) {
+      if (isTokenExpired) {
+        logAuditEvent("gmail_token_refresh_failed", {
+          userId,
+          error: scanError,
+        });
+      } else {
+        logAuditEvent("gmail_scan_failed", { userId, error: scanError });
+      }
     }
-
-    logAuditEvent("gmail_scan_failed", { userId, error: error.message });
-
-    return {
-      scannedCount,
-      newSubscriptionsCount,
-      updatedSubscriptionsCount,
-      error: error.message,
-    };
   }
+
+  return {
+    scannedCount,
+    newSubscriptionsCount,
+    updatedSubscriptionsCount,
+    error: scanError || undefined,
+  };
 }

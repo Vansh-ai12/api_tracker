@@ -1,0 +1,274 @@
+"use client";
+
+import { useState, useEffect } from "react";
+
+interface ApiIntegration {
+  id: string;
+  service_name: string;
+  provider: string;
+  usage_current: number | null;
+  usage_limit: number | null;
+  usage_unit: string;
+  credits_remaining: number | null;
+  credit_limit: number | null;
+  reset_at: string | null;
+  currency: string;
+  cost: number | null;
+  status: string;
+  connection_type: string;
+  last_synced_at: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+}
+
+interface ApiUsageCardProps {
+  isPro: boolean;
+}
+
+export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
+  const [integrations, setIntegrations] = useState<ApiIntegration[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
+
+  useEffect(() => {
+    if (isPro) {
+      fetchIntegrations();
+    } else {
+      setLoading(false);
+    }
+  }, [isPro]);
+
+  async function fetchIntegrations() {
+    try {
+      const res = await fetch("/api/api-integrations");
+      if (res.ok) {
+        const data = await res.json();
+        setIntegrations(data.integrations || []);
+      }
+    } catch {
+      // Ignore errors
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const getUsagePercentage = (current: number | null, limit: number | null) => {
+    if (current === null || limit === null || limit === 0) return null;
+    return Math.round((current / limit) * 100);
+  };
+
+  const getWarningLevel = (percentage: number | null) => {
+    if (percentage === null) return "normal";
+    if (percentage >= 100) return "limit-reached";
+    if (percentage >= 90) return "near-limit";
+    if (percentage >= 70) return "approaching";
+    return "normal";
+  };
+
+  const getWarningColor = (level: string) => {
+    switch (level) {
+      case "limit-reached":
+        return "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border-rose-200 dark:border-rose-900/50";
+      case "near-limit":
+        return "bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400 border-orange-200 dark:border-orange-900/50";
+      case "approaching":
+        return "bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-400 border-yellow-200 dark:border-yellow-900/50";
+      default:
+        return "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900/50";
+    }
+  };
+
+  const getWarningLabel = (level: string) => {
+    switch (level) {
+      case "limit-reached": return "Limit reached";
+      case "near-limit": return "Near limit";
+      case "approaching": return "Approaching limit";
+      default: return "Within limit";
+    }
+  };
+
+  if (!isPro) {
+    return (
+      <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-bold text-[#0a0a0a] dark:text-white">
+            API & Service Usage
+          </h3>
+        </div>
+        <div className="text-center py-8 px-6 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800/50">
+          <div className="w-12 h-12 bg-gradient-to-br from-purple-50 to-indigo-100 dark:from-purple-950/50 dark:to-indigo-900/30 text-purple-600 dark:text-purple-400 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-purple-100 dark:border-purple-900/50">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <p className="text-sm font-semibold text-[#0a0a0a] dark:text-white mb-2">
+            Pro Feature
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+            Track API usage, limits, and credits for external services.
+          </p>
+          <button className="px-4 py-2 rounded-full bg-black dark:bg-white text-white dark:text-black text-xs font-semibold hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors cursor-pointer">
+            Upgrade to Pro
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
+        <div className="animate-pulse space-y-4">
+          <div className="h-6 bg-gray-200 dark:bg-gray-800 rounded w-1/3"></div>
+          <div className="space-y-3">
+            {[1, 2].map((i) => (
+              <div key={i} className="h-24 bg-gray-100 dark:bg-gray-800 rounded-xl"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-bold text-[#0a0a0a] dark:text-white">
+          API & Service Usage
+        </h3>
+        <button
+          type="button"
+          onClick={() => setShowAddModal(true)}
+          className="px-3 py-1.5 rounded-full bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition-colors cursor-pointer"
+        >
+          + Add Service
+        </button>
+      </div>
+
+      {integrations.length === 0 ? (
+        <div className="text-center py-8 px-6 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800/50">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No API integrations tracked yet. Add your first service to monitor usage.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {integrations.map((integration) => {
+            const percentage = getUsagePercentage(integration.usage_current, integration.usage_limit);
+            const warningLevel = getWarningLevel(percentage);
+            const remaining = integration.usage_limit && integration.usage_current
+              ? integration.usage_limit - integration.usage_current
+              : null;
+
+            return (
+              <div
+                key={integration.id}
+                className="p-4 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800/50"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h4 className="font-semibold text-sm text-[#0a0a0a] dark:text-white">
+                      {integration.service_name}
+                    </h4>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">
+                      {integration.provider} • {integration.connection_type === "connected" ? "Connected" : "Manual"}
+                    </p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${getWarningColor(warningLevel)}`}>
+                    {getWarningLabel(warningLevel)}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-3">
+                  <div>
+                    <p className="text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5">
+                      Usage
+                    </p>
+                    <p className="text-sm font-bold text-[#0a0a0a] dark:text-white">
+                      {integration.usage_current !== null ? integration.usage_current.toLocaleString() : "N/A"}
+                      {integration.usage_limit !== null && ` / ${integration.usage_limit.toLocaleString()}`}
+                      <span className="text-xs text-gray-400 dark:text-gray-500 ml-1">
+                        {integration.usage_unit}
+                      </span>
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-0.5">
+                      Remaining
+                    </p>
+                    <p className="text-sm font-bold text-[#0a0a0a] dark:text-white">
+                      {remaining !== null ? remaining.toLocaleString() : "N/A"}
+                      <span className="text-xs text-gray-400 dark:text-gray-500 ml-1">
+                        {integration.usage_unit}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                {percentage !== null && (
+                  <div className="mb-3">
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div
+                        className={`h-2 rounded-full transition-all ${
+                          warningLevel === "limit-reached"
+                            ? "bg-rose-500"
+                            : warningLevel === "near-limit"
+                            ? "bg-orange-500"
+                            : warningLevel === "approaching"
+                            ? "bg-yellow-500"
+                            : "bg-emerald-500"
+                        }`}
+                        style={{ width: `${Math.min(percentage, 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
+                      {percentage}% used
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-gray-500">
+                  {integration.reset_at && (
+                    <span>Reset: {new Date(integration.reset_at).toLocaleDateString("en-IN", { month: "short", day: "numeric" })}</span>
+                  )}
+                  {integration.last_synced_at && (
+                    <span>Last synced: {new Date(integration.last_synced_at).toLocaleDateString("en-IN")}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-[#141414] rounded-2xl border border-gray-100 dark:border-gray-800 p-6 w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-[#0a0a0a] dark:text-white">
+                Add API Integration
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+              Manual tracking is available. Automatic sync for specific providers requires provider API integration.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowAddModal(false)}
+              className="w-full px-4 py-2 rounded-full bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

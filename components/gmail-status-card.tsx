@@ -104,18 +104,15 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
         setMessage(
           `Scan complete! ${data.newSubscriptionsCount || 0} new subscriptions found.`,
         );
-
-        // Give the database a moment to commit the completed scan state,
-        // then retrieve the fresh Gmail status.
-        await new Promise((resolve) => setTimeout(resolve, 300));
-
-        await fetchLatestStatus();
       } else {
         setMessage(data.error || "Scan failed.");
-        await fetchLatestStatus();
       }
+
+      // Always fetch latest status from server as source of truth
+      await fetchLatestStatus();
     } catch {
       setMessage("Scan failed due to network error.");
+      await fetchLatestStatus();
     } finally {
       setLoading(false);
     }
