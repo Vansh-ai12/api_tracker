@@ -8,7 +8,7 @@ import { GmailStatusCard } from "@/components/gmail-status-card";
 import { PlanCard } from "@/components/plan-card";
 import { AddSubscriptionButton } from "@/components/add-subscription-button";
 import { ApiIntegrationsCard } from "@/components/api-integrations-card";
-import { ApiUsageCard } from "@/components/api-usage-card";
+
 import { redirect } from "next/navigation";
 
 // Force dynamic rendering — reads cookies & database on every request
@@ -437,8 +437,7 @@ export default async function DashboardPage() {
           )}
         </section>
 
-        {/* API Usage Card (Pro Feature) */}
-        <ApiUsageCard isPro={isPro} />
+       
       </main>
     </div>
   );
