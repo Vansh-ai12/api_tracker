@@ -264,9 +264,11 @@ export async function runGmailInboxScan(userId: string): Promise<{
       ? Date.now() - new Date(lockUser.updated_at).getTime()
       : 0;
 
-    // A scan should never remain locked indefinitely.
-    // Treat locks older than 10 minutes as stale.
-    if (lockAgeMs < 10 * 60 * 1000) {
+    // Allow a stuck scan to recover sooner so manual scans
+    // do not remain blocked for a long time.
+    const STALE_SCAN_LOCK_MS = 2 * 60 * 1000;
+
+    if (lockAgeMs < STALE_SCAN_LOCK_MS) {
       return {
         scannedCount: 0,
         newSubscriptionsCount: 0,
@@ -315,26 +317,27 @@ export async function runGmailInboxScan(userId: string): Promise<{
     // 2. Obtain fresh in-memory access token
     const accessToken = await getFreshAccessToken(user.gmail_refresh_token);
 
-    // 3. Incremental scan: only search recent messages since last scan
-    // Limit to 50 messages per run to avoid overwhelming the system
+    // 3. Incremental scan: only inspect recent inbox messages.
+    // Never scan the entire inbox. This keeps Gmail + AI usage bounded.
     const messages: { id: string; threadId: string }[] = [];
-    
-    // Build query to get only recent messages
-    // If we have a last scan time, get messages since then (max 50)
-    // Otherwise, get the 50 most recent messages
-    let query = "in:inbox (subscription OR receipt OR invoice OR renewal OR payment)";
-    const maxResults = "50";
 
-    // Add date filter if we have a last successful scan
-    if (user.gmail_last_scan_at) {
-      const lastScanDate = new Date(user.gmail_last_scan_at);
-      const dateStr = lastScanDate.toISOString().split('T')[0];
-      query += ` after:${dateStr}`;
-    }
+    // Scan a bounded recent window on every run.
+    // Deduplication via subscription_evidence prevents already-processed
+    // Gmail messages from being processed again.
+    const scanSince = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    // Gmail's `after:` search operator works reliably with a Unix timestamp.
+    const scanSinceSeconds = Math.floor(scanSince.getTime() / 1000);
+
+    const query =
+      `in:inbox after:${scanSinceSeconds} ` +
+      `{receipt invoice payment renewal subscription charged purchase billing}`;
+
+    const maxResults = "50";
 
     const params = new URLSearchParams({
       q: query,
-      maxResults: maxResults,
+      maxResults,
     });
 
     const searchUrl = `${GMAIL_MESSAGES_ENDPOINT}?${params.toString()}`;
@@ -373,7 +376,8 @@ export async function runGmailInboxScan(userId: string): Promise<{
       // Provide specific error messages for common Gmail API errors
       let errorMessage = `Gmail API message list failed with status ${searchRes.status}`;
       if (searchRes.status === 403) {
-        errorMessage = "Gmail permission denied. Please reconnect Gmail to grant read-only access.";
+        errorMessage =
+          "Gmail permission denied. Please reconnect Gmail to grant read-only access.";
       } else if (searchRes.status === 401) {
         errorMessage = "Gmail authentication expired. Please reconnect Gmail.";
       } else if (searchRes.status === 429) {
@@ -596,15 +600,14 @@ export async function runGmailInboxScan(userId: string): Promise<{
     }
 
     // Handle token expiration specifically
-    const isTokenExpired = scanError?.toLowerCase().includes("token") || scanError?.toLowerCase().includes("expired");
+    const isTokenExpired =
+      scanError?.toLowerCase().includes("token") ||
+      scanError?.toLowerCase().includes("expired");
     if (isTokenExpired) {
       updateData.gmail_connected = false;
     }
 
-    await supabase
-      .from("users")
-      .update(updateData)
-      .eq("id", userId);
+    await supabase.from("users").update(updateData).eq("id", userId);
 
     if (scanError) {
       if (isTokenExpired) {
