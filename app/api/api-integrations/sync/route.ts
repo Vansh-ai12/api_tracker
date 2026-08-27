@@ -124,6 +124,23 @@ export async function POST(request: Request) {
         if (syncResult.usage.resetAt) updateData.reset_at = syncResult.usage.resetAt;
         if (syncResult.usage.metadata) updateData.metadata = syncResult.usage.metadata;
         
+        // Store verification results
+        if (syncResult.verification) {
+          updateData.verification_status = syncResult.verification.status;
+          updateData.verification_provider_total = syncResult.verification.providerTotal;
+          updateData.verification_calculated_total = syncResult.verification.calculatedTotal;
+          updateData.verification_difference = syncResult.verification.difference;
+          updateData.verification_difference_percentage = syncResult.verification.differencePercentage;
+          updateData.verification_checked_at = syncResult.verification.checkedAt;
+          updateData.verification_reason = syncResult.verification.reason;
+          updateData.verification_tolerance = syncResult.verification.tolerance;
+        }
+
+        // Store account identifier
+        if (syncResult.usage.accountIdentifier) {
+          updateData.account_identifier = syncResult.usage.accountIdentifier;
+        }
+        
         // Calculate next sync time
         const interval = integration.sync_interval_minutes || 360; // Default 6 hours
         updateData.next_sync_at = new Date(Date.now() + interval * 60 * 1000).toISOString();
@@ -154,6 +171,35 @@ export async function POST(request: Request) {
           metadata: syncResult.usage.metadata,
           recorded_at: now.toISOString(),
         });
+
+        // Record verification history
+        if (syncResult.verification) {
+          await supabase.from("api_verification_history").insert({
+            integration_id: integration.id,
+            user_id: userId,
+            provider: integration.provider,
+            verification_status: syncResult.verification.status,
+            verification_provider_total: syncResult.verification.providerTotal,
+            verification_calculated_total: syncResult.verification.calculatedTotal,
+            verification_difference: syncResult.verification.difference,
+            verification_difference_percentage: syncResult.verification.differencePercentage,
+            verification_reason: syncResult.verification.reason,
+            verification_tolerance: syncResult.verification.tolerance,
+            usage_current: syncResult.usage.usageCurrent,
+            usage_limit: syncResult.usage.usageLimit,
+            usage_unit: syncResult.usage.usageUnit,
+            input_tokens: syncResult.usage.inputTokens,
+            output_tokens: syncResult.usage.outputTokens,
+            cached_tokens: syncResult.usage.cachedTokens,
+            requests: syncResult.usage.requests,
+            cost: syncResult.usage.cost,
+            currency: syncResult.usage.currency,
+            raw_provider_response: syncResult.usage.rawProviderResponse,
+            account_identifier: syncResult.usage.accountIdentifier,
+            metadata: syncResult.usage.metadata,
+            verified_at: now.toISOString(),
+          });
+        }
       }
 
       logAuditEvent("api_integration_sync_completed", { userId });

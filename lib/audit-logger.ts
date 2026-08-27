@@ -24,7 +24,10 @@ export type AuditEventType =
   | "api_telegram_send"
   | "api_integration_sync_started"
   | "api_integration_sync_completed"
-  | "api_integration_sync_failed";
+  | "api_integration_sync_failed"
+  | "api_integration_verify_started"
+  | "api_integration_verify_completed"
+  | "api_integration_verify_failed";
 
 export function logAuditEvent(
   event: AuditEventType,

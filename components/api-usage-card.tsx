@@ -20,6 +20,13 @@ interface ApiIntegration {
   last_sync_status: string | null;
   last_sync_error: string | null;
   next_sync_at: string | null;
+  verification_status: string | null;
+  verification_provider_total: number | null;
+  verification_calculated_total: number | null;
+  verification_difference: number | null;
+  verification_difference_percentage: number | null;
+  verification_checked_at: string | null;
+  verification_reason: string | null;
 }
 
 interface ApiUsageCardProps {
@@ -31,6 +38,9 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
+  const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set());
+  const [showVerificationModal, setShowVerificationModal] = useState(false);
+  const [selectedIntegration, setSelectedIntegration] = useState<ApiIntegration | null>(null);
 
   useEffect(() => {
     if (isPro) {
@@ -79,6 +89,58 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
       });
     }
   }
+
+  async function handleVerify(integrationId: string) {
+    if (verifyingIds.has(integrationId)) return;
+
+    setVerifyingIds((prev) => new Set(prev).add(integrationId));
+
+    try {
+      const res = await fetch(`/api/api-integrations/${integrationId}/verify`, {
+        method: "POST",
+      });
+
+      if (res.ok) {
+        await fetchIntegrations();
+      }
+    } catch {
+      // Ignore errors
+    } finally {
+      setVerifyingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(integrationId);
+        return next;
+      });
+    }
+  }
+
+  const getVerificationStatus = (integration: ApiIntegration) => {
+    if (verifyingIds.has(integration.id)) return "verifying";
+    if (!integration.verification_status) return "never";
+    return integration.verification_status;
+  };
+
+  const getVerificationIcon = (status: string) => {
+    switch (status) {
+      case "verified": return "✓";
+      case "mismatch": return "⚠";
+      case "unavailable": return "—";
+      case "failed": return "✕";
+      case "verifying": return "⟳";
+      default: return "—";
+    }
+  };
+
+  const getVerificationColor = (status: string) => {
+    switch (status) {
+      case "verified": return "text-emerald-600 dark:text-emerald-400";
+      case "mismatch": return "text-orange-600 dark:text-orange-400";
+      case "unavailable": return "text-gray-400 dark:text-gray-500";
+      case "failed": return "text-rose-600 dark:text-rose-400";
+      case "verifying": return "text-blue-600 dark:text-blue-400";
+      default: return "text-gray-400 dark:text-gray-500";
+    }
+  };
 
   const getUsagePercentage = (current: number | null, limit: number | null) => {
     if (current === null || limit === null || limit === 0) return null;
@@ -238,9 +300,24 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
                       {integration.provider} • {integration.connection_type === "automatic" ? "Connected" : "Manual"}
                     </p>
                   </div>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${getWarningColor(warningLevel)}`}>
-                    {getWarningLabel(warningLevel)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${getWarningColor(warningLevel)}`}>
+                      {getWarningLabel(warningLevel)}
+                    </span>
+                    {integration.connection_type === "automatic" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedIntegration(integration);
+                          setShowVerificationModal(true);
+                        }}
+                        className={`text-[10px] font-medium ${getVerificationColor(getVerificationStatus(integration))} hover:underline cursor-pointer`}
+                        title={integration.verification_reason || "Click for details"}
+                      >
+                        {getVerificationIcon(getVerificationStatus(integration))} {getVerificationStatus(integration) === "verifying" ? "Verifying..." : getVerificationStatus(integration) === "never" ? "Not verified" : getVerificationStatus(integration)}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mb-3">
@@ -306,14 +383,24 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
                 </div>
 
                 {integration.connection_type === "automatic" && (
-                  <button
-                    type="button"
-                    onClick={() => handleSync(integration.id)}
-                    disabled={syncingIds.has(integration.id)}
-                    className="w-full px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white text-xs font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    {syncingIds.has(integration.id) ? "Syncing..." : "Sync Now"}
-                  </button>
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={() => handleSync(integration.id)}
+                      disabled={syncingIds.has(integration.id) || verifyingIds.has(integration.id)}
+                      className="flex-1 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white text-xs font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {syncingIds.has(integration.id) ? "Syncing..." : "Sync Now"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleVerify(integration.id)}
+                      disabled={syncingIds.has(integration.id) || verifyingIds.has(integration.id)}
+                      className="flex-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white text-xs font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {verifyingIds.has(integration.id) ? "Verifying..." : "Verify Now"}
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -346,6 +433,91 @@ export function ApiUsageCard({ isPro }: ApiUsageCardProps) {
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {showVerificationModal && selectedIntegration && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-[#141414] rounded-2xl border border-gray-100 dark:border-gray-800 p-6 w-full max-w-lg shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-[#0a0a0a] dark:text-white">
+                Verification Details
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowVerificationModal(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1">Service</p>
+                <p className="text-sm font-semibold text-[#0a0a0a] dark:text-white">{selectedIntegration.service_name}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1">Provider</p>
+                <p className="text-sm text-[#0a0a0a] dark:text-white capitalize">{selectedIntegration.provider}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1">Verification Status</p>
+                <p className={`text-sm font-semibold ${getVerificationColor(getVerificationStatus(selectedIntegration))}`}>
+                  {getVerificationIcon(getVerificationStatus(selectedIntegration))} {getVerificationStatus(selectedIntegration) === "never" ? "Not verified" : getVerificationStatus(selectedIntegration)}
+                </p>
+              </div>
+              {selectedIntegration.verification_checked_at && (
+                <div>
+                  <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1">Last Checked</p>
+                  <p className="text-sm text-[#0a0a0a] dark:text-white">
+                    {new Date(selectedIntegration.verification_checked_at as string).toLocaleString()}
+                  </p>
+                </div>
+              )}
+              {selectedIntegration.verification_provider_total !== null && (
+                <div>
+                  <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1">Provider Reported</p>
+                  <p className="text-sm text-[#0a0a0a] dark:text-white">
+                    {selectedIntegration.verification_provider_total.toLocaleString()} {selectedIntegration.usage_unit}
+                  </p>
+                </div>
+              )}
+              {selectedIntegration.verification_calculated_total !== null && (
+                <div>
+                  <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1">Calculated</p>
+                  <p className="text-sm text-[#0a0a0a] dark:text-white">
+                    {selectedIntegration.verification_calculated_total.toLocaleString()} {selectedIntegration.usage_unit}
+                  </p>
+                </div>
+              )}
+              {selectedIntegration.verification_difference !== null && (
+                <div>
+                  <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1">Difference</p>
+                  <p className="text-sm text-[#0a0a0a] dark:text-white">
+                    {selectedIntegration.verification_difference.toLocaleString()} {selectedIntegration.usage_unit}
+                    {selectedIntegration.verification_difference_percentage !== null && ` (${selectedIntegration.verification_difference_percentage.toFixed(2)}%)`}
+                  </p>
+                </div>
+              )}
+              {selectedIntegration.verification_reason && (
+                <div>
+                  <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mb-1">Reason</p>
+                  <p className="text-sm text-[#0a0a0a] dark:text-white">{selectedIntegration.verification_reason}</p>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowVerificationModal(false);
+                  handleVerify(selectedIntegration.id);
+                }}
+                disabled={verifyingIds.has(selectedIntegration.id)}
+                className="w-full px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white text-sm font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed"
+              >
+                {verifyingIds.has(selectedIntegration.id) ? "Verifying..." : "Verify Now"}
+              </button>
+            </div>
           </div>
         </div>
       )}

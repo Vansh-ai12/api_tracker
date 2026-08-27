@@ -1,4 +1,5 @@
-import { ProviderAdapter, ProviderCredentials, ProviderSyncResult, ProviderUsage } from "./types";
+import { ProviderAdapter, ProviderCredentials, ProviderSyncResult, ProviderUsage, ProviderBalance, VerificationResult, VerificationStatus } from "./types";
+import { reconcileUsage, sanitizeProviderResponse } from "./verification";
 
 /**
  * Anthropic provider adapter
@@ -46,14 +47,33 @@ export class AnthropicAdapter implements ProviderAdapter {
         currency: null,
         resetAt: null,
         syncedAt: new Date().toISOString(),
+        rawProviderResponse: null,
+        accountIdentifier: null,
+        inputTokens: null,
+        outputTokens: null,
+        cachedTokens: null,
+        modelBreakdown: null,
         metadata: {
           limitation: "Anthropic does not provide a public usage API. Manual tracking required."
         }
       };
 
+      // Verification is unavailable since we can't fetch usage data
+      const verification: VerificationResult = {
+        status: VerificationStatus.UNAVAILABLE,
+        providerTotal: null,
+        calculatedTotal: null,
+        difference: null,
+        differencePercentage: null,
+        checkedAt: new Date().toISOString(),
+        reason: "Anthropic does not expose sufficient usage data for verification",
+        tolerance: 1.0,
+      };
+
       return { 
         success: true, 
         usage,
+        verification,
         error: "Automatic usage tracking not available for Anthropic. Please update usage manually."
       };
     } catch (error: any) {
@@ -63,6 +83,19 @@ export class AnthropicAdapter implements ProviderAdapter {
         error: error.message || "Failed to fetch Anthropic usage"
       };
     }
+  }
+
+  async fetchBalance(credentials: ProviderCredentials): Promise<ProviderBalance | null> {
+    try {
+      // Anthropic doesn't have a public balance endpoint
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  verifyUsage(usage: ProviderUsage): VerificationResult {
+    return reconcileUsage(usage);
   }
 
   private async makeAnthropicRequest(

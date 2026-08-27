@@ -20,6 +20,61 @@ export interface ProviderUsage {
   metadata?: Record<string, unknown>;
 
   syncedAt: string;
+
+  // Verification fields
+  rawProviderResponse?: Record<string, unknown> | null;
+  accountIdentifier?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cachedTokens?: number | null;
+  modelBreakdown?: ModelUsage[] | null;
+}
+
+/**
+ * Model-level usage breakdown
+ */
+export interface ModelUsage {
+  model: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+  totalTokens?: number;
+  cost?: number;
+  requests?: number;
+}
+
+/**
+ * Provider balance information
+ */
+export interface ProviderBalance {
+  balance?: number | null;
+  currency?: string | null;
+  expiresAt?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Verification status
+ */
+export enum VerificationStatus {
+  VERIFIED = "verified",
+  MISMATCH = "mismatch",
+  UNAVAILABLE = "unavailable",
+  FAILED = "failed",
+}
+
+/**
+ * Verification result
+ */
+export interface VerificationResult {
+  status: VerificationStatus;
+  providerTotal: number | null;
+  calculatedTotal: number | null;
+  difference: number | null;
+  differencePercentage: number | null;
+  checkedAt: string;
+  reason: string | null;
+  tolerance: number; // tolerance percentage used
 }
 
 /**
@@ -29,6 +84,7 @@ export interface ProviderCredentials {
   apiKey: string;
   organizationId?: string;
   projectId?: string;
+  isAdminKey?: boolean;
   [key: string]: string | undefined;
 }
 
@@ -38,6 +94,8 @@ export interface ProviderCredentials {
 export interface ProviderSyncResult {
   success: boolean;
   usage: ProviderUsage;
+  verification?: VerificationResult | null;
+  balance?: ProviderBalance | null;
   error?: string;
   rateLimited?: boolean;
   rateLimitResetAt?: string;
@@ -65,6 +123,16 @@ export interface ProviderAdapter {
    * Fetch usage from provider API
    */
   fetchUsage(credentials: ProviderCredentials): Promise<ProviderSyncResult>;
+  
+  /**
+   * Fetch balance from provider API (optional)
+   */
+  fetchBalance?(credentials: ProviderCredentials): Promise<ProviderBalance | null>;
+  
+  /**
+   * Verify usage by comparing provider-reported vs calculated totals
+   */
+  verifyUsage?(usage: ProviderUsage): VerificationResult;
 }
 
 /**
