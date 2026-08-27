@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
 import { encryptToken } from "@/lib/encryption";
+import { providerRegistry } from "@/lib/api-usage/registry";
+import { ProviderCredentials } from "@/lib/api-usage/types";
 
 export async function GET() {
   const userId = await getSessionUserId();
@@ -111,9 +113,51 @@ export async function POST(request: Request) {
       );
     }
 
-    // Encrypt credentials if provided
+    // Determine connection type based on provider
+    const normalizedProvider = provider.trim().toLowerCase();
+    const isAutomaticProvider = ["openai", "anthropic", "gemini"].includes(normalizedProvider);
+    const isManual = connection_type === "manual" || normalizedProvider === "manual";
+    
+    let finalConnectionType = isManual ? "manual" : "automatic";
+    let syncEnabled = !isManual;
     let encryptedCredentials = null;
-    if (credentials && typeof credentials === "string") {
+
+    // For automatic providers, validate credentials and test connection
+    if (!isManual && credentials && typeof credentials === "string") {
+      const adapter = providerRegistry.get(normalizedProvider);
+      
+      if (!adapter) {
+        return NextResponse.json(
+          { error: `Provider "${provider}" is not supported for automatic tracking` },
+          { status: 400 },
+        );
+      }
+
+      const providerCredentials: ProviderCredentials = {
+        apiKey: credentials,
+      };
+
+      // Validate credential format
+      if (!adapter.validateCredentials(providerCredentials)) {
+        return NextResponse.json(
+          { error: `Invalid ${adapter.displayName} API key format` },
+          { status: 400 },
+        );
+      }
+
+      // Test connection
+      const connectionValid = await adapter.testConnection(providerCredentials);
+      if (!connectionValid) {
+        return NextResponse.json(
+          { error: `Failed to connect to ${adapter.displayName}. Please check your API key.` },
+          { status: 400 },
+        );
+      }
+
+      // Encrypt credentials
+      encryptedCredentials = encryptToken(credentials);
+    } else if (credentials && typeof credentials === "string") {
+      // Manual credentials (optional)
       encryptedCredentials = encryptToken(credentials);
     }
 
@@ -144,12 +188,14 @@ export async function POST(request: Request) {
         currency: currency || "USD",
         cost: cost !== undefined ? parseFloat(String(cost)) : null,
         status: status || "active",
-        connection_type: connection_type || "manual",
+        connection_type: finalConnectionType,
+        sync_enabled: syncEnabled,
         encrypted_credentials: encryptedCredentials,
         notes: notes?.trim() || null,
+        next_sync_at: syncEnabled ? new Date(Date.now() + 360 * 60 * 1000).toISOString() : null,
       })
       .select(
-        "id, service_name, provider, category, usage_current, usage_limit, usage_unit, credits_remaining, credit_limit, billing_period, reset_at, deadline_at, currency, cost, status, connection_type, last_synced_at, last_sync_status, last_sync_error, notes, created_at, updated_at",
+        "id, service_name, provider, category, usage_current, usage_limit, usage_unit, credits_remaining, credit_limit, billing_period, reset_at, deadline_at, currency, cost, status, connection_type, sync_enabled, last_synced_at, last_sync_status, last_sync_error, notes, created_at, updated_at",
       )
       .single();
 

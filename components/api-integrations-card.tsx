@@ -19,16 +19,27 @@ interface Integration {
   cost?: number | null;
   status?: string | null;
   connection_type?: string | null;
+  sync_enabled?: boolean | null;
   last_synced_at?: string | null;
   last_sync_status?: string | null;
   last_sync_error?: string | null;
+  verification_status?: string | null;
   notes?: string | null;
 }
 
+const PROVIDERS = [
+  { value: "openai", label: "OpenAI", description: "Admin API key required for usage data" },
+  { value: "anthropic", label: "Anthropic", description: "Admin API key required (currently unavailable)" },
+  { value: "gemini", label: "Google Gemini", description: "Cloud credentials required (currently unavailable)" },
+  { value: "manual", label: "Manual Tracking", description: "Enter usage manually" },
+];
+
 const emptyForm = {
   service_name: "",
-  provider: "",
+  provider: "openai",
   category: "AI / API",
+  credentials: "",
+  // Manual fields
   usage_current: "",
   usage_limit: "",
   usage_unit: "tokens",
@@ -39,9 +50,6 @@ const emptyForm = {
   deadline_at: "",
   currency: "USD",
   cost: "",
-  status: "active",
-  connection_type: "manual",
-  credentials: "",
   notes: "",
 };
 
@@ -52,6 +60,7 @@ export function ApiIntegrationsCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState(emptyForm);
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
 
   async function fetchIntegrations() {
     try {
@@ -102,55 +111,39 @@ export function ApiIntegrationsCard() {
       return;
     }
 
+    const isManual = form.provider === "manual";
+
+    if (!isManual && !form.credentials.trim()) {
+      setError("API key is required for automatic tracking.");
+      return;
+    }
+
     setSaving(true);
     setError("");
 
     try {
-      const payload = {
+      const payload: any = {
         service_name: form.service_name.trim(),
         provider: form.provider.trim(),
         category: form.category || null,
-
-        usage_current:
-          form.usage_current === ""
-            ? 0
-            : Number(form.usage_current),
-
-        usage_limit:
-          form.usage_limit === ""
-            ? null
-            : Number(form.usage_limit),
-
-        usage_unit: form.usage_unit || null,
-
-        credits_remaining:
-          form.credits_remaining === ""
-            ? null
-            : Number(form.credits_remaining),
-
-        credit_limit:
-          form.credit_limit === ""
-            ? null
-            : Number(form.credit_limit),
-
-        billing_period: form.billing_period || null,
-        reset_at: form.reset_at || null,
-        deadline_at: form.deadline_at || null,
-        currency: form.currency || "USD",
-
-        cost:
-          form.cost === ""
-            ? 0
-            : Number(form.cost),
-
-        status: form.status || "active",
-        connection_type: form.connection_type || "manual",
-
-        credentials:
-          form.credentials.trim() || undefined,
-
+        connection_type: isManual ? "manual" : "automatic",
+        credentials: form.credentials.trim() || undefined,
         notes: form.notes.trim() || null,
       };
+
+      // Only include manual fields if manual tracking
+      if (isManual) {
+        payload.usage_current = form.usage_current === "" ? 0 : Number(form.usage_current);
+        payload.usage_limit = form.usage_limit === "" ? null : Number(form.usage_limit);
+        payload.usage_unit = form.usage_unit || null;
+        payload.credits_remaining = form.credits_remaining === "" ? null : Number(form.credits_remaining);
+        payload.credit_limit = form.credit_limit === "" ? null : Number(form.credit_limit);
+        payload.billing_period = form.billing_period || null;
+        payload.reset_at = form.reset_at || null;
+        payload.deadline_at = form.deadline_at || null;
+        payload.currency = form.currency || "USD";
+        payload.cost = form.cost === "" ? 0 : Number(form.cost);
+      }
 
       const res = await fetch("/api/api-integrations", {
         method: "POST",
@@ -181,6 +174,32 @@ export function ApiIntegrationsCard() {
     }
   }
 
+  async function handleSync(integrationId: string) {
+    if (syncingIds.has(integrationId)) return;
+
+    setSyncingIds((prev) => new Set(prev).add(integrationId));
+
+    try {
+      const res = await fetch(`/api/api-integrations/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ integration_id: integrationId }),
+      });
+
+      if (res.ok) {
+        await fetchIntegrations();
+      }
+    } catch {
+      // Ignore errors
+    } finally {
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(integrationId);
+        return next;
+      });
+    }
+  }
+
   if (loading) {
     return (
       <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
@@ -198,6 +217,9 @@ export function ApiIntegrationsCard() {
       </div>
     );
   }
+
+  const selectedProvider = PROVIDERS.find(p => p.value === form.provider);
+  const isManual = form.provider === "manual";
 
   return (
     <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
@@ -236,25 +258,16 @@ export function ApiIntegrationsCard() {
           </p>
 
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-            Add OpenAI, Claude, or any other API to track usage and credits.
+            Connect OpenAI, Anthropic, or Gemini for automatic tracking, or add manual entries.
           </p>
         </div>
       ) : (
         <div className="space-y-3">
           {integrations.map((integration) => {
-            const usage =
-              integration.usage_current ?? 0;
-
-            const limit =
-              integration.usage_limit ?? 0;
-
-            const usagePercent =
-              limit > 0
-                ? Math.min(
-                    100,
-                    Math.round((usage / limit) * 100),
-                  )
-                : 0;
+            const isAuto = integration.connection_type === "automatic";
+            const usage = integration.usage_current ?? 0;
+            const limit = integration.usage_limit ?? 0;
+            const usagePercent = limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : 0;
 
             return (
               <div
@@ -268,102 +281,101 @@ export function ApiIntegrationsCard() {
                         {integration.service_name}
                       </span>
 
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500 text-white">
-                        {integration.status || "active"}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${isAuto ? "bg-blue-500" : "bg-gray-500"} text-white`}>
+                        {isAuto ? "Auto" : "Manual"}
                       </span>
+
+                      {integration.verification_status && (
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                          integration.verification_status === "verified" ? "bg-emerald-500" :
+                          integration.verification_status === "mismatch" ? "bg-orange-500" :
+                          integration.verification_status === "unavailable" ? "bg-gray-500" :
+                          "bg-rose-500"
+                        } text-white`}>
+                          {integration.verification_status}
+                        </span>
+                      )}
                     </div>
 
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                       {integration.provider}
-                      {integration.category
-                        ? ` • ${integration.category}`
-                        : ""}
+                      {integration.category ? ` • ${integration.category}` : ""}
                     </p>
+
+                    {isAuto && integration.last_synced_at && (
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        Last synced: {new Date(integration.last_synced_at).toLocaleString()}
+                      </p>
+                    )}
+
+                    {!isAuto && (
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        Manual tracking
+                      </p>
+                    )}
                   </div>
 
-                  {integration.credits_remaining !== null &&
-                    integration.credits_remaining !== undefined && (
-                      <div className="text-right shrink-0">
-                        <p className="text-[10px] text-gray-400">
-                          Credits remaining
-                        </p>
-                        <p className="text-sm font-bold text-emerald-500">
-                          {integration.currency || "USD"}{" "}
-                          {integration.credits_remaining}
-                        </p>
-                      </div>
-                    )}
+                  {isAuto && (
+                    <button
+                      type="button"
+                      onClick={() => handleSync(integration.id)}
+                      disabled={syncingIds.has(integration.id)}
+                      className="rounded-lg bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white px-3 py-1.5 text-xs font-semibold transition"
+                    >
+                      {syncingIds.has(integration.id) ? "Syncing..." : "Sync Now"}
+                    </button>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
                   <div>
-                    <p className="text-[10px] text-gray-400">
-                      Usage
-                    </p>
+                    <p className="text-[10px] text-gray-400">Usage</p>
                     <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
-                      {usage.toLocaleString()}{" "}
-                      {integration.usage_unit || ""}
+                      {usage !== null ? usage.toLocaleString() : "—"}
+                      {integration.usage_unit ? ` ${integration.usage_unit}` : ""}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-[10px] text-gray-400">
-                      Limit
-                    </p>
+                    <p className="text-[10px] text-gray-400">Limit</p>
                     <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
-                      {limit
-                        ? limit.toLocaleString()
-                        : "—"}
+                      {limit ? limit.toLocaleString() : "Unavailable"}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-[10px] text-gray-400">
-                      Billing
-                    </p>
+                    <p className="text-[10px] text-gray-400">Cost</p>
                     <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
-                      {integration.billing_period || "—"}
+                      {integration.cost !== null && integration.cost !== undefined ? `${integration.currency || "USD"} ${integration.cost.toFixed(2)}` : "Unavailable"}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-[10px] text-gray-400">
-                      Reset
-                    </p>
+                    <p className="text-[10px] text-gray-400">Balance</p>
                     <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
-                      {integration.reset_at
-                        ? new Date(
-                            integration.reset_at,
-                          ).toLocaleDateString("en-IN")
-                        : "—"}
+                      {integration.credits_remaining !== null ? `${integration.currency || "USD"} ${integration.credits_remaining}` : "Unavailable"}
                     </p>
                   </div>
                 </div>
 
-                {limit > 0 && (
+                {limit > 0 && usagePercent > 0 && (
                   <div className="mt-3">
                     <div className="flex justify-between text-[10px] text-gray-400 mb-1">
                       <span>Usage</span>
                       <span>{usagePercent}%</span>
                     </div>
-
                     <div className="h-1.5 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
                       <div
                         className="h-full rounded-full bg-emerald-500 transition-all"
-                        style={{
-                          width: `${usagePercent}%`,
-                        }}
+                        style={{ width: `${usagePercent}%` }}
                       />
                     </div>
                   </div>
                 )}
 
-                {integration.deadline_at && (
-                  <p className="text-[10px] text-gray-400 mt-3">
-                    Deadline:{" "}
-                    {new Date(
-                      integration.deadline_at,
-                    ).toLocaleDateString("en-IN")}
+                {integration.last_sync_error && (
+                  <p className="text-[10px] text-rose-500 mt-3">
+                    Last error: {integration.last_sync_error}
                   </p>
                 )}
               </div>
@@ -380,9 +392,8 @@ export function ApiIntegrationsCard() {
                 <h2 className="text-lg font-bold text-white">
                   Add API Service
                 </h2>
-
                 <p className="text-xs text-gray-400 mt-1">
-                  Add OpenAI, Claude, or any API you want to track.
+                  Connect a provider for automatic tracking or enter usage manually.
                 </p>
               </div>
 
@@ -395,169 +406,155 @@ export function ApiIntegrationsCard() {
               </button>
             </div>
 
-            <form
-              onSubmit={handleSubmit}
-              className="space-y-4"
-            >
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field
                   label="Service name"
                   value={form.service_name}
-                  onChange={(v) =>
-                    updateField("service_name", v)
-                  }
-                  placeholder="OpenAI API"
+                  onChange={(v) => updateField("service_name", v)}
+                  placeholder="My OpenAI API"
                   required
                 />
 
-                <Field
-                  label="Provider"
-                  value={form.provider}
-                  onChange={(v) =>
-                    updateField("provider", v)
-                  }
-                  placeholder="OpenAI"
-                  required
-                />
+                <div>
+                  <label className="block text-xs font-medium text-gray-300 mb-1">
+                    Provider
+                  </label>
+                  <select
+                    value={form.provider}
+                    onChange={(e) => updateField("provider", e.target.value)}
+                    className="w-full rounded-lg border border-gray-700 bg-[#0d0d0d] text-white px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                  >
+                    {PROVIDERS.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedProvider && (
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      {selectedProvider.description}
+                    </p>
+                  )}
+                </div>
 
                 <Field
                   label="Category"
                   value={form.category}
-                  onChange={(v) =>
-                    updateField("category", v)
-                  }
+                  onChange={(v) => updateField("category", v)}
                   placeholder="AI / API"
                 />
 
-                <Field
-                  label="Usage unit"
-                  value={form.usage_unit}
-                  onChange={(v) =>
-                    updateField("usage_unit", v)
-                  }
-                  placeholder="tokens"
-                />
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-gray-300 mb-1">
+                    {isManual ? "API key / credentials (optional)" : "API key (required)"}
+                  </label>
+                  <input
+                    type="password"
+                    value={form.credentials}
+                    onChange={(e) => updateField("credentials", e.target.value)}
+                    placeholder={isManual ? "Stored securely (optional)" : "sk-proj-... for OpenAI Admin API"}
+                    required={!isManual}
+                    className="w-full rounded-lg border border-gray-700 bg-[#0d0d0d] text-white px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                  />
+                  {!isManual && (
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      Credentials are encrypted and stored securely.
+                    </p>
+                  )}
+                </div>
 
-                <Field
-                  label="Current usage"
-                  type="number"
-                  value={form.usage_current}
-                  onChange={(v) =>
-                    updateField("usage_current", v)
-                  }
-                  placeholder="125000"
-                />
+                {isManual && (
+                  <>
+                    <Field
+                      label="Current usage"
+                      type="number"
+                      value={form.usage_current}
+                      onChange={(v) => updateField("usage_current", v)}
+                      placeholder="125000"
+                    />
 
-                <Field
-                  label="Usage limit"
-                  type="number"
-                  value={form.usage_limit}
-                  onChange={(v) =>
-                    updateField("usage_limit", v)
-                  }
-                  placeholder="1000000"
-                />
+                    <Field
+                      label="Usage limit"
+                      type="number"
+                      value={form.usage_limit}
+                      onChange={(v) => updateField("usage_limit", v)}
+                      placeholder="1000000"
+                    />
 
-                <Field
-                  label="Credits remaining"
-                  type="number"
-                  step="any"
-                  value={form.credits_remaining}
-                  onChange={(v) =>
-                    updateField("credits_remaining", v)
-                  }
-                  placeholder="8.50"
-                />
+                    <Field
+                      label="Usage unit"
+                      value={form.usage_unit}
+                      onChange={(v) => updateField("usage_unit", v)}
+                      placeholder="tokens"
+                    />
 
-                <Field
-                  label="Credit limit"
-                  type="number"
-                  step="any"
-                  value={form.credit_limit}
-                  onChange={(v) =>
-                    updateField("credit_limit", v)
-                  }
-                  placeholder="10"
-                />
+                    <Field
+                      label="Credits remaining"
+                      type="number"
+                      step="any"
+                      value={form.credits_remaining}
+                      onChange={(v) => updateField("credits_remaining", v)}
+                      placeholder="8.50"
+                    />
 
-                <Field
-                  label="Billing period"
-                  value={form.billing_period}
-                  onChange={(v) =>
-                    updateField("billing_period", v)
-                  }
-                  placeholder="Monthly"
-                />
+                    <Field
+                      label="Credit limit"
+                      type="number"
+                      step="any"
+                      value={form.credit_limit}
+                      onChange={(v) => updateField("credit_limit", v)}
+                      placeholder="10"
+                    />
 
-                <Field
-                  label="Currency"
-                  value={form.currency}
-                  onChange={(v) =>
-                    updateField("currency", v)
-                  }
-                  placeholder="USD"
-                />
+                    <Field
+                      label="Billing period"
+                      value={form.billing_period}
+                      onChange={(v) => updateField("billing_period", v)}
+                      placeholder="Monthly"
+                    />
 
-                <Field
-                  label="Reset date"
-                  type="date"
-                  value={form.reset_at}
-                  onChange={(v) =>
-                    updateField("reset_at", v)
-                  }
-                />
+                    <Field
+                      label="Currency"
+                      value={form.currency}
+                      onChange={(v) => updateField("currency", v)}
+                      placeholder="USD"
+                    />
 
-                <Field
-                  label="Deadline"
-                  type="date"
-                  value={form.deadline_at}
-                  onChange={(v) =>
-                    updateField("deadline_at", v)
-                  }
-                />
+                    <Field
+                      label="Reset date"
+                      type="date"
+                      value={form.reset_at}
+                      onChange={(v) => updateField("reset_at", v)}
+                    />
 
-                <Field
-                  label="Cost"
-                  type="number"
-                  step="any"
-                  value={form.cost}
-                  onChange={(v) =>
-                    updateField("cost", v)
-                  }
-                  placeholder="10"
-                />
+                    <Field
+                      label="Deadline"
+                      type="date"
+                      value={form.deadline_at}
+                      onChange={(v) => updateField("deadline_at", v)}
+                    />
 
-                <Field
-                  label="Connection type"
-                  value={form.connection_type}
-                  onChange={(v) =>
-                    updateField("connection_type", v)
-                  }
-                  placeholder="manual"
-                />
+                    <Field
+                      label="Cost"
+                      type="number"
+                      step="any"
+                      value={form.cost}
+                      onChange={(v) => updateField("cost", v)}
+                      placeholder="10"
+                    />
+                  </>
+                )}
               </div>
-
-              <Field
-                label="API key / credentials (optional)"
-                type="password"
-                value={form.credentials}
-                onChange={(v) =>
-                  updateField("credentials", v)
-                }
-                placeholder="Stored securely"
-              />
 
               <div>
                 <label className="block text-xs font-medium text-gray-300 mb-1">
                   Notes
                 </label>
-
                 <textarea
                   value={form.notes}
-                  onChange={(e) =>
-                    updateField("notes", e.target.value)
-                  }
-                  rows={3}
+                  onChange={(e) => updateField("notes", e.target.value)}
+                  rows={2}
                   className="w-full rounded-lg border border-gray-700 bg-[#0d0d0d] text-white px-3 py-2 text-sm outline-none focus:border-emerald-500"
                   placeholder="Optional notes"
                 />
@@ -583,9 +580,7 @@ export function ApiIntegrationsCard() {
                   disabled={saving}
                   className="rounded-lg bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 text-sm font-semibold text-white"
                 >
-                  {saving
-                    ? "Saving..."
-                    : "Add Service"}
+                  {saving ? "Saving..." : "Add Service"}
                 </button>
               </div>
             </form>
@@ -618,7 +613,6 @@ function Field({
       <label className="block text-xs font-medium text-gray-300 mb-1">
         {label}
       </label>
-
       <input
         type={type}
         step={step}
