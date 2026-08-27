@@ -85,7 +85,7 @@ export interface ProviderCredentials {
   organizationId?: string;
   projectId?: string;
   isAdminKey?: boolean;
-  [key: string]: string | undefined;
+  [key: string]: string | boolean | undefined;
 }
 
 /**
