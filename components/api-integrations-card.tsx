@@ -53,7 +53,7 @@ const emptyForm = {
   notes: "",
 };
 
-export function ApiIntegrationsCard() {
+export function ApiIntegrationsCard({ isPro }: { isPro: boolean }) {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -90,8 +90,14 @@ export function ApiIntegrationsCard() {
   }
 
   useEffect(() => {
+    if (!isPro) {
+      setLoading(false);
+      setIntegrations([]);
+      return;
+    }
+
     fetchIntegrations();
-  }, []);
+  }, [isPro]);
 
   function updateField(
     field: keyof typeof emptyForm,
@@ -200,6 +206,19 @@ export function ApiIntegrationsCard() {
     }
   }
 
+  async function handleDelete(integrationId: string) {
+    try {
+      const res = await fetch(`/api/api-integrations/${integrationId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        await fetchIntegrations();
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+
   if (loading) {
     return (
       <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
@@ -220,6 +239,49 @@ export function ApiIntegrationsCard() {
 
   const selectedProvider = PROVIDERS.find(p => p.value === form.provider);
   const isManual = form.provider === "manual";
+
+  // Locked state for Free users
+  if (!isPro) {
+    return (
+      <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-bold text-[#0a0a0a] dark:text-white">
+              API & Integrations
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              Track API usage, credits, limits and billing.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
+              Pro feature
+            </span>
+            <span className="text-xs px-2 py-1 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+              🔒 Locked
+            </span>
+          </div>
+        </div>
+
+        <div className="rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 p-8 text-center">
+          <div className="text-4xl mb-4">🔒</div>
+          <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">
+            API usage tracking is a Pro feature
+          </h4>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+            Connect OpenAI, Anthropic, Gemini, and other providers for automatic usage tracking and verification.
+          </p>
+          <button
+            type="button"
+            className="rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 text-xs font-semibold transition"
+          >
+            Upgrade to Pro
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
