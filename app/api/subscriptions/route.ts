@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
+import {
+  requireSubscriptionSlot,
+  rollbackIfOverSubscriptionLimit,
+} from "@/lib/plan";
 
 export async function POST(request: Request) {
   const userId = await getSessionUserId();
@@ -61,6 +65,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Subscription with this name already exists" }, { status: 409 });
     }
 
+    const limitError = await requireSubscriptionSlot(userId);
+    if (limitError) return limitError;
+
     // Insert the new subscription
     const { data: newSub, error: insertError } = await supabase
       .from("subscriptions")
@@ -80,6 +87,9 @@ export async function POST(request: Request) {
       console.error("[api/subscriptions] Insert error:", insertError);
       return NextResponse.json({ error: "Failed to create subscription" }, { status: 500 });
     }
+
+    const raceLimitError = await rollbackIfOverSubscriptionLimit(userId, newSub.id);
+    if (raceLimitError) return raceLimitError;
 
     return NextResponse.json({ success: true, subscription: newSub });
   } catch (error: any) {

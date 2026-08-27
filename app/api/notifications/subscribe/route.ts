@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUserId } from "@/lib/session";
+import { requireProUser } from "@/lib/plan";
 
 export async function POST(req: Request) {
   try {
@@ -14,6 +15,9 @@ export async function POST(req: Request) {
         { status: 401 },
       );
     }
+
+    const forbidden = await requireProUser(userId);
+    if (forbidden) return forbidden;
 
     const body = await req.json();
     const subscription = body?.subscription as {

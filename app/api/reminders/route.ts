@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { sendPushToUser } from "@/lib/push";
 import { runGmailInboxScan } from "@/lib/subscription-scanner";
 import { logAuditEvent } from "@/lib/audit-logger";
+import { isProUser } from "@/lib/plan";
 
 async function sendTelegramReminder(
   chatId: number,
@@ -152,6 +153,10 @@ export async function GET() {
     for (const subscription of dueSubscriptions || []) {
       const user = Array.isArray(subscription.users) ? subscription.users[0] : subscription.users;
       if (!user) continue;
+
+      if (!(await isProUser(subscription.user_id))) {
+        continue;
+      }
 
       // Allow re-nudging if last nudge was in a prior cycle (more than 7 days ago) or null
       if (subscription.last_nudged_at && subscription.last_nudged_at > sevenDaysAgo) {

@@ -4,6 +4,7 @@ import { decryptToken } from "@/lib/encryption";
 import { providerRegistry } from "@/lib/api-usage/registry";
 import { ProviderCredentials } from "@/lib/api-usage/types";
 import { logAuditEvent } from "@/lib/audit-logger";
+import { isProUser } from "@/lib/plan";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +61,19 @@ export async function GET(request: Request) {
     let failed = 0;
     const now = new Date();
 
+    const planCache = new Map<string, boolean>();
+
     for (const integration of integrations) {
+      let userIsPro = planCache.get(integration.user_id);
+      if (userIsPro === undefined) {
+        userIsPro = await isProUser(integration.user_id);
+        planCache.set(integration.user_id, userIsPro);
+      }
+      if (!userIsPro) {
+        skipped++;
+        continue;
+      }
+
       // Skip if not due for sync
       if (integration.next_sync_at && new Date(integration.next_sync_at) > now) {
         skipped++;

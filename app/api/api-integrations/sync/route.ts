@@ -5,6 +5,7 @@ import { decryptToken } from "@/lib/encryption";
 import { providerRegistry } from "@/lib/api-usage/registry";
 import { ProviderCredentials } from "@/lib/api-usage/types";
 import { logAuditEvent } from "@/lib/audit-logger";
+import { requireProUser } from "@/lib/plan";
 
 const SYNC_LOCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -14,18 +15,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const forbidden = await requireProUser(userId);
+  if (forbidden) return forbidden;
+
   const supabase = createServiceClient();
-
-  // Check if user is Pro
-  const { data: user } = await supabase
-    .from("users")
-    .select("plan")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (!user || user.plan !== "pro") {
-    return NextResponse.json({ error: "Pro plan required" }, { status: 403 });
-  }
 
   try {
     const body = await request.json();

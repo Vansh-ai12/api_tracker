@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
 import { encryptToken } from "@/lib/encryption";
+import { requireProUser } from "@/lib/plan";
 
 export async function PATCH(
   request: Request,
@@ -13,18 +14,10 @@ export async function PATCH(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const forbidden = await requireProUser(userId);
+  if (forbidden) return forbidden;
+
   const supabase = createServiceClient();
-
-  // Check if user is Pro
-  const { data: user } = await supabase
-    .from("users")
-    .select("plan")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (!user || user.plan !== "pro") {
-    return NextResponse.json({ error: "Pro plan required" }, { status: 403 });
-  }
 
   try {
     const body = await request.json();
@@ -114,18 +107,7 @@ export async function DELETE(
 
   const supabase = createServiceClient();
 
-  // Check if user is Pro
-  const { data: user } = await supabase
-    .from("users")
-    .select("plan")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (!user || user.plan !== "pro") {
-    return NextResponse.json({ error: "Pro plan required" }, { status: 403 });
-  }
-
-  // Verify ownership (RLS will also enforce this)
+  // Deletion is allowed on Free so users can clean up leftover integrations.
   const { data: existing } = await supabase
     .from("api_integrations")
     .select("id")

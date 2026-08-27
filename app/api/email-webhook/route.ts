@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { parseEmailContent } from "@/lib/subscription-scanner";
 import { logAuditEvent } from "@/lib/audit-logger";
+import { canCreateTrackedSubscription, isProUser } from "@/lib/plan";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -113,6 +114,13 @@ export async function POST(request: Request) {
         })
         .eq("id", existingSub.id);
     } else {
+      if (!(await canCreateTrackedSubscription(user.id))) {
+        return NextResponse.json({
+          success: true,
+          message: "Email processed. Free plan subscription limit reached; existing subscriptions were not changed.",
+        });
+      }
+
       const { data: newSub } = await supabase
         .from("subscriptions")
         .insert({
@@ -145,9 +153,9 @@ export async function POST(request: Request) {
 
     logAuditEvent("email_webhook_received", { userId: user.id, telegramChatId: user.telegram_chat_id });
 
-    // 8. Send Telegram alert to user
+    // 8. Send Telegram alert to Pro users only (automated notification)
     const token = process.env.TELEGRAM_BOT_TOKEN;
-    if (token && user.telegram_chat_id) {
+    if (token && user.telegram_chat_id && (await isProUser(user.id))) {
       const amountStr = parsed.amount ? `${parsed.currency === "INR" ? "₹" : parsed.currency} ${parsed.amount}` : "Amount unspecified";
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: "POST",

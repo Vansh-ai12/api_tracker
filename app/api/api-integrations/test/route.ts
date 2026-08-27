@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/session";
-import { createServiceClient } from "@/lib/supabase-server";
-import { encryptToken, decryptToken } from "@/lib/encryption";
+import { requireProUser } from "@/lib/plan";
 import { providerRegistry } from "@/lib/api-usage/registry";
 import { ProviderCredentials } from "@/lib/api-usage/types";
 
@@ -11,18 +10,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
-
-  // Check if user is Pro
-  const { data: user } = await supabase
-    .from("users")
-    .select("plan")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (!user || user.plan !== "pro") {
-    return NextResponse.json({ error: "Pro plan required" }, { status: 403 });
-  }
+  const forbidden = await requireProUser(userId);
+  if (forbidden) return forbidden;
 
   try {
     const body = await request.json();

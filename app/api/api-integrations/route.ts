@@ -4,6 +4,12 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { encryptToken } from "@/lib/encryption";
 import { providerRegistry } from "@/lib/api-usage/registry";
 import { ProviderCredentials } from "@/lib/api-usage/types";
+import { requireProUser, isProUser } from "@/lib/plan";
+
+function stripCredentials(integration: Record<string, unknown>) {
+  const { encrypted_credentials, ...safe } = integration;
+  return safe;
+}
 
 export async function GET() {
   const userId = await getSessionUserId();
@@ -12,19 +18,10 @@ export async function GET() {
   }
 
   const supabase = createServiceClient();
+  const isPro = await isProUser(userId);
 
-  // Check if user is Pro
-  const { data: user } = await supabase
-    .from("users")
-    .select("plan")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (!user || user.plan !== "pro") {
-    return NextResponse.json({ error: "Pro plan required" }, { status: 403 });
-  }
-
-  // Get user's integrations (RLS ensures user can only see their own)
+  // Get user's integrations (never return credentials).
+  // Free users may still list existing rows so the UI can show them as locked.
   const { data: integrations, error } = await supabase
     .from("api_integrations")
     .select("*")
@@ -39,14 +36,13 @@ export async function GET() {
     );
   }
 
-  // Remove encrypted credentials from response
   const safeIntegrations =
-    integrations?.map((int: any) => ({
-      ...int,
-      encrypted_credentials: undefined,
-    })) || [];
+    integrations?.map((int: Record<string, unknown>) => stripCredentials(int)) || [];
 
-  return NextResponse.json({ integrations: safeIntegrations });
+  return NextResponse.json({
+    integrations: safeIntegrations,
+    locked: !isPro,
+  });
 }
 
 export async function POST(request: Request) {
@@ -55,18 +51,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const forbidden = await requireProUser(userId);
+  if (forbidden) return forbidden;
+
   const supabase = createServiceClient();
-
-  // Check if user is Pro
-  const { data: user } = await supabase
-    .from("users")
-    .select("plan")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (!user || user.plan !== "pro") {
-    return NextResponse.json({ error: "Pro plan required" }, { status: 403 });
-  }
 
   try {
     const body = await request.json();

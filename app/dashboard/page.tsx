@@ -250,7 +250,9 @@ export default async function DashboardPage() {
               Subscription Dashboard
             </h1>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              AI receipt parsing & automated renewal reminders.
+              {isPro
+                ? "AI receipt parsing & automated renewal reminders."
+                : "AI receipt parsing & subscription tracking. Automated reminders are a Pro feature."}
             </p>
           </div>
 
@@ -265,7 +267,7 @@ export default async function DashboardPage() {
         <GmailStatusCard initialStatus={gmailStatus} />
 
         {/* API & Integrations Catalog */}
-        <ApiIntegrationsCard />
+        <ApiIntegrationsCard isPro={isPro} />
 
         {/* Analytics Highlights Grid (4 Cards) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -313,7 +315,7 @@ export default async function DashboardPage() {
               {nextRenewal}
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              Automated renewal alert
+              {isPro ? "Automated renewal alert" : "Reminders available on Pro"}
             </p>
           </div>
 
@@ -375,11 +377,18 @@ export default async function DashboardPage() {
         {/* Subscription Tracking List */}
         <section className="space-y-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold tracking-tight text-[#0a0a0a] dark:text-white">
-              Tracked Subscriptions
-            </h2>
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-[#0a0a0a] dark:text-white">
+                Tracked Subscriptions
+              </h2>
+              {!isPro && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  2 subscription limit · {active.length}/{2} active used
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-3">
-              <AddSubscriptionButton />
+              <AddSubscriptionButton isPro={isPro} activeCount={active.length} />
               <span className="text-xs text-gray-400 dark:text-gray-500 font-medium">
                 {subscriptions.length} total recorded
               </span>

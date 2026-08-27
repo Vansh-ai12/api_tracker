@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
+import { requireProUser } from "@/lib/plan";
 
 export async function GET(
   request: Request,
@@ -12,18 +13,10 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const forbidden = await requireProUser(userId);
+  if (forbidden) return forbidden;
+
   const supabase = createServiceClient();
-
-  // Check if user is Pro
-  const { data: user } = await supabase
-    .from("users")
-    .select("plan")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (!user || user.plan !== "pro") {
-    return NextResponse.json({ error: "Pro plan required" }, { status: 403 });
-  }
 
   // Verify ownership
   const { data: integration } = await supabase

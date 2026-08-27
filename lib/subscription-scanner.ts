@@ -1,6 +1,7 @@
 import { createServiceClient } from "./supabase-server";
 import { getFreshAccessToken } from "./gmail-oauth";
 import { logAuditEvent } from "./audit-logger";
+import { canCreateTrackedSubscription } from "./plan";
 import Groq from "groq-sdk";
 
 const GMAIL_MESSAGES_ENDPOINT =
@@ -507,6 +508,10 @@ export async function runGmailInboxScan(userId: string): Promise<{
 
         updatedSubscriptionsCount++;
       } else {
+        if (!(await canCreateTrackedSubscription(userId))) {
+          continue;
+        }
+
         const { data: newSub, error: insertSubErr } = await supabase
           .from("subscriptions")
           .insert({

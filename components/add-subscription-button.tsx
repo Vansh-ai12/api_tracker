@@ -2,7 +2,15 @@
 
 import { useState } from "react";
 
-export function AddSubscriptionButton() {
+const FREE_SUBSCRIPTION_LIMIT = 2;
+
+export function AddSubscriptionButton({
+  isPro,
+  activeCount,
+}: {
+  isPro: boolean;
+  activeCount: number;
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -47,7 +55,7 @@ export function AddSubscriptionButton() {
           window.location.reload();
         }, 1000);
       } else {
-        setMessage(data.error || "Failed to add subscription");
+        setMessage(data.message || data.error || "Failed to add subscription");
       }
     } catch {
       setMessage("Network error occurred");
@@ -56,7 +64,26 @@ export function AddSubscriptionButton() {
     }
   }
 
+  const atFreeLimit = !isPro && activeCount >= FREE_SUBSCRIPTION_LIMIT;
+
   if (!isOpen) {
+    if (atFreeLimit) {
+      return (
+        <div className="flex flex-col items-end gap-1">
+          <button
+            type="button"
+            disabled
+            className="px-4 py-2 rounded-full bg-gray-200 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs font-semibold cursor-not-allowed"
+          >
+            + Add Subscription
+          </button>
+          <p className="text-[11px] text-amber-700 dark:text-amber-400 max-w-[16rem] text-right">
+            Free plan limit reached. Upgrade to Pro for unlimited subscriptions.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <button
         type="button"

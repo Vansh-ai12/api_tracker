@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUserId } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
+import { isProUser } from "@/lib/plan";
 
 export async function GET() {
   const userId = await getSessionUserId();
@@ -63,8 +64,8 @@ export async function GET() {
     icon: "📱",
   });
 
-  // Browser Notifications (Web Push)
-  const isPro = user?.plan === "pro";
+  // Browser Notifications (Web Push) — Pro-only
+  const isPro = await isProUser(userId);
   integrations.push({
     name: "Browser Notifications",
     purpose: "Browser-based renewal alerts",

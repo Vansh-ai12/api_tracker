@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import { createServiceClient } from "./supabase-server";
+import { isProUser } from "./plan";
 
 let vapidConfigured = false;
 
@@ -43,6 +44,10 @@ export async function sendPushToUser(
   payload: PushPayload,
 ): Promise<void> {
   if (!ensureVapidConfigured()) return;
+
+  if (!(await isProUser(userId))) {
+    return;
+  }
 
   const supabase = createServiceClient();
 
