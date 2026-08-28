@@ -2,6 +2,7 @@ import { createServiceClient } from "./supabase-server";
 import { getFreshAccessToken } from "./gmail-oauth";
 import { logAuditEvent } from "./audit-logger";
 import { canCreateTrackedSubscription } from "./plan";
+import { recordProviderBillingSignal } from "./billing-signals";
 import Groq from "groq-sdk";
 
 const GMAIL_MESSAGES_ENDPOINT =
@@ -457,6 +458,19 @@ export async function runGmailInboxScan(userId: string): Promise<{
 
       const bodyText = decodeGmailBody(msgData.payload);
       const fullText = `Subject: ${subjectHeader}\nFrom: ${fromHeader}\n\n${bodyText}`;
+
+      // Provider billing events are deliberately captured independently from
+      // subscriptions. A billing email is a signal, never an API usage total.
+      await recordProviderBillingSignal({
+        userId,
+        sourceEmailId: msgRef.id,
+        from: fromHeader,
+        subject: subjectHeader,
+        body: bodyText,
+        eventDate: msgData.internalDate
+          ? new Date(Number(msgData.internalDate)).toISOString()
+          : undefined,
+      });
 
       // 6. Parse subscription details with AI
       const parsed = await parseEmailContent(fullText);

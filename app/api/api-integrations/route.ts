@@ -75,6 +75,9 @@ export async function POST(request: Request) {
       status,
       connection_type,
       credentials,
+      provider_api_type,
+      project_id,
+      organization_id,
       notes,
     } = body;
 
@@ -123,6 +126,9 @@ export async function POST(request: Request) {
 
       const providerCredentials: ProviderCredentials = {
         apiKey: credentials,
+        projectId: typeof project_id === "string" ? project_id : undefined,
+        organizationId: typeof organization_id === "string" ? organization_id : undefined,
+        isAdminKey: provider_api_type === "admin",
       };
 
       // Validate credential format
@@ -179,6 +185,15 @@ export async function POST(request: Request) {
         connection_type: finalConnectionType,
         sync_enabled: syncEnabled,
         encrypted_credentials: encryptedCredentials,
+        data_source: isManual ? "manual" : "provider_api",
+        provider_api_type: isManual ? "none" : provider_api_type || "standard",
+        project_id: typeof project_id === "string" ? project_id.trim() || null : null,
+        organization_id: typeof organization_id === "string" ? organization_id.trim() || null : null,
+        metadata: isManual ? {} : {
+          isAdminKey: provider_api_type === "admin",
+          projectId: typeof project_id === "string" ? project_id.trim() || null : null,
+          organizationId: typeof organization_id === "string" ? organization_id.trim() || null : null,
+        },
         notes: notes?.trim() || null,
         next_sync_at: syncEnabled ? new Date(Date.now() + 360 * 60 * 1000).toISOString() : null,
       })

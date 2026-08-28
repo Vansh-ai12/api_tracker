@@ -24,6 +24,8 @@ interface Integration {
   last_sync_status?: string | null;
   last_sync_error?: string | null;
   verification_status?: string | null;
+  data_source?: "manual" | "provider_api" | "email_billing_signal" | null;
+  provider_api_type?: string | null;
   notes?: string | null;
 }
 
@@ -39,6 +41,8 @@ const emptyForm = {
   provider: "openai",
   category: "AI / API",
   credentials: "",
+  provider_api_type: "standard",
+  project_id: "",
   // Manual fields
   usage_current: "",
   usage_limit: "",
@@ -134,6 +138,8 @@ export function ApiIntegrationsCard({ isPro }: { isPro: boolean }) {
         category: form.category || null,
         connection_type: isManual ? "manual" : "automatic",
         credentials: form.credentials.trim() || undefined,
+        provider_api_type: form.provider_api_type,
+        project_id: form.project_id.trim() || undefined,
         notes: form.notes.trim() || null,
       };
 
@@ -327,9 +333,12 @@ export function ApiIntegrationsCard({ isPro }: { isPro: boolean }) {
         <div className="space-y-3">
           {integrations.map((integration) => {
             const isAuto = integration.connection_type === "automatic";
-            const usage = integration.usage_current ?? 0;
-            const limit = integration.usage_limit ?? 0;
-            const usagePercent = limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : 0;
+            const usage = integration.usage_current ?? null;
+            const limit = integration.usage_limit ?? null;
+            const usagePercent = usage !== null && limit !== null && limit > 0 ? Math.min(100, Math.round((usage / limit) * 100)) : null;
+            const syncAge = integration.last_synced_at ? Date.now() - new Date(integration.last_synced_at).getTime() : null;
+            const freshness = syncAge === null ? "Never synced" : syncAge > 24 * 60 * 60 * 1000 ? "Stale" : "Fresh";
+            const source = integration.data_source === "provider_api" ? `${integration.provider === "openai" ? "OpenAI Usage API" : integration.provider === "gemini" ? "Google Cloud / Gemini API" : "Provider API"}` : integration.data_source === "email_billing_signal" ? "Email billing signal" : "Manual";
 
             return (
               <div
@@ -364,9 +373,11 @@ export function ApiIntegrationsCard({ isPro }: { isPro: boolean }) {
                       {integration.category ? ` • ${integration.category}` : ""}
                     </p>
 
+                    <p className="text-[10px] text-gray-400 mt-1">Source: {source}</p>
+
                     {isAuto && integration.last_synced_at && (
                       <p className="text-[10px] text-gray-400 mt-1">
-                        Last synced: {new Date(integration.last_synced_at).toLocaleString()}
+                        {freshness} · last successful sync: {new Date(integration.last_synced_at).toLocaleString()}
                       </p>
                     )}
 
@@ -401,14 +412,14 @@ export function ApiIntegrationsCard({ isPro }: { isPro: boolean }) {
                   <div>
                     <p className="text-[10px] text-gray-400">Limit</p>
                     <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
-                      {limit ? limit.toLocaleString() : "Unavailable"}
+                      {limit !== null ? limit.toLocaleString() : "Unavailable"}
                     </p>
                   </div>
 
                   <div>
                     <p className="text-[10px] text-gray-400">Cost</p>
                     <p className="text-xs font-semibold text-gray-700 dark:text-gray-200">
-                      {integration.cost !== null && integration.cost !== undefined ? `${integration.currency || "USD"} ${integration.cost.toFixed(2)}` : "Unavailable"}
+                      {integration.cost !== null && integration.cost !== undefined ? `${integration.currency || "USD"} ${integration.cost.toFixed(2)}` : "Cost unavailable"}
                     </p>
                   </div>
 
@@ -420,7 +431,7 @@ export function ApiIntegrationsCard({ isPro }: { isPro: boolean }) {
                   </div>
                 </div>
 
-                {limit > 0 && usagePercent > 0 && (
+                {limit !== null && limit > 0 && usagePercent !== null && (
                   <div className="mt-3">
                     <div className="flex justify-between text-[10px] text-gray-400 mb-1">
                       <span>Usage</span>
@@ -500,6 +511,33 @@ export function ApiIntegrationsCard({ isPro }: { isPro: boolean }) {
                   )}
                 </div>
 
+                {!isManual && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-300 mb-1">Connection level</label>
+                    <select
+                      value={form.provider_api_type}
+                      onChange={(e) => updateField("provider_api_type", e.target.value)}
+                      className="w-full rounded-lg border border-gray-700 bg-[#0d0d0d] text-white px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                    >
+                      {form.provider === "openai" ? <>
+                        <option value="standard">Standard API credential — validates only</option>
+                        <option value="admin">Organization Admin credential — usage and costs</option>
+                      </> : form.provider === "gemini" ? <>
+                        <option value="standard">Gemini API key — validates only</option>
+                        <option value="project">Google Cloud project authorization</option>
+                      </> : <option value="standard">Standard API credential</option>}
+                    </select>
+                    <p className="text-[10px] text-gray-400 mt-1">Metrics are shown only when this credential legitimately exposes them.</p>
+                  </div>
+                )}
+
+                {!isManual && form.provider === "gemini" && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-300 mb-1">Google Cloud project ID</label>
+                    <input value={form.project_id} onChange={(e) => updateField("project_id", e.target.value)} placeholder="project-id" className="w-full rounded-lg border border-gray-700 bg-[#0d0d0d] text-white px-3 py-2 text-sm outline-none focus:border-emerald-500" />
+                  </div>
+                )}
+
                 <Field
                   label="Category"
                   value={form.category}
@@ -515,7 +553,7 @@ export function ApiIntegrationsCard({ isPro }: { isPro: boolean }) {
                     type="password"
                     value={form.credentials}
                     onChange={(e) => updateField("credentials", e.target.value)}
-                    placeholder={isManual ? "Stored securely (optional)" : "sk-proj-... for OpenAI Admin API"}
+                    placeholder={isManual ? "Stored securely (optional)" : form.provider === "openai" && form.provider_api_type === "admin" ? "OpenAI Organization Admin API key" : "Provider credential"}
                     required={!isManual}
                     className="w-full rounded-lg border border-gray-700 bg-[#0d0d0d] text-white px-3 py-2 text-sm outline-none focus:border-emerald-500"
                   />

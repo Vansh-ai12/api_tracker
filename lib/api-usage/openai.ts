@@ -29,60 +29,35 @@ export class OpenAIAdapter implements ProviderAdapter {
 
   async fetchUsage(credentials: ProviderCredentials): Promise<ProviderSyncResult> {
     try {
-      // Check if this is an Admin API key (starts with sk-proj- or has admin flag)
-      const isAdminKey = credentials.apiKey.startsWith("sk-proj-") || credentials.isAdminKey === true;
+      // A normal project/inference key must never be treated as organization
+      // authority. The user explicitly selects the Admin credential mode.
+      const isAdminKey = credentials.isAdminKey === true;
 
       if (!isAdminKey) {
         // Regular API keys cannot access organization usage
         return {
           success: false,
           usage: { syncedAt: new Date().toISOString() },
-          error: "Organization usage requires an Admin API key. Regular API keys do not have permission to access organization usage data. Please use an Admin API key (starts with sk-proj-)."
+          error: "Organization usage and costs require an OpenAI Organization Admin API key. A standard inference key can connect, but cannot read organization usage."
         };
       }
 
-      // Fetch usage from OpenAI Admin API
+      // The documented Admin endpoint uses /usage/completions. Grouping preserves
+      // the available model, project and API-key dimensions for snapshots.
       const startTime = Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000); // 30 days ago
       const endTime = Math.floor(Date.now() / 1000);
       
-      const usageUrl = `https://api.openai.com/v1/organization/usage?start_time=${startTime}&end_time=${endTime}&bucket_width=1d`;
-      const usageResponse = await this.makeOpenAIRequest(
-        credentials,
-        usageUrl,
-        "GET"
-      );
+      const query = new URLSearchParams({ start_time: String(startTime), end_time: String(endTime), bucket_width: "1d", limit: "31" });
+      query.append("group_by", "model");
+      query.append("group_by", "project_id");
+      query.append("group_by", "api_key_id");
+      const usageData = await this.fetchAllPages(credentials, `/v1/organization/usage/completions?${query}`);
 
-      if (!usageResponse.ok) {
-        if (usageResponse.status === 401) {
-          return {
-            success: false,
-            usage: { syncedAt: new Date().toISOString() },
-            error: "Invalid Admin API key or insufficient permissions"
-          };
-        }
-        if (usageResponse.status === 403) {
-          return {
-            success: false,
-            usage: { syncedAt: new Date().toISOString() },
-            error: "Admin API key does not have permission to read organization usage"
-          };
-        }
-        if (usageResponse.status === 429) {
-          return {
-            success: false,
-            usage: { syncedAt: new Date().toISOString() },
-            error: "Rate limited",
-            rateLimited: true
-          };
-        }
-        return {
-          success: false,
-          usage: { syncedAt: new Date().toISOString() },
-          error: `OpenAI API error: ${usageResponse.status}`
-        };
-      }
-
-      const usageData = await usageResponse.json();
+      // Costs are authoritative billing data; do not reconstruct them from
+      // model prices. Permission failures leave cost explicitly unavailable.
+      const costQuery = new URLSearchParams({ start_time: String(startTime), end_time: String(endTime), bucket_width: "1d", limit: "31" });
+      costQuery.append("group_by", "project_id");
+      const costsData = await this.fetchAllPages(credentials, `/v1/organization/costs?${costQuery}`).catch(() => null);
       
       // Extract detailed breakdown for verification
       const modelBreakdown = this.extractModelBreakdown(usageData);
@@ -97,17 +72,19 @@ export class OpenAIAdapter implements ProviderAdapter {
         usageLimit: null, // OpenAI doesn't provide a hard limit via API
         usageUnit: "tokens",
         requests: this.extractTotalRequests(usageData),
-        cost: this.extractTotalCost(usageData),
-        currency: "USD",
+        cost: costsData ? this.extractTotalCost(costsData) : null,
+        currency: costsData ? this.extractCostCurrency(costsData) : null,
         resetAt: this.extractResetDate(usageData),
         syncedAt: new Date().toISOString(),
-        rawProviderResponse: sanitizeProviderResponse(usageData),
+        rawProviderResponse: sanitizeProviderResponse({ usage: usageData, costs: costsData }),
         accountIdentifier,
         inputTokens,
         outputTokens,
         cachedTokens,
         modelBreakdown,
         metadata: {
+          source: "OpenAI Usage API",
+          costSource: costsData ? "OpenAI Costs API" : "unavailable",
           rawUsage: usageData
         }
       };
@@ -160,6 +137,21 @@ export class OpenAIAdapter implements ProviderAdapter {
     });
   }
 
+  private async fetchAllPages(credentials: ProviderCredentials, path: string): Promise<any> {
+    const all: any[] = [];
+    let nextPage: string | null = null;
+    do {
+      const url = new URL(`https://api.openai.com${path}`);
+      if (nextPage) url.searchParams.set("page", nextPage);
+      const response = await this.makeOpenAIRequest(credentials, `${url.pathname}${url.search}`, "GET");
+      if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+      const page = await response.json();
+      all.push(...(Array.isArray(page.data) ? page.data : []));
+      nextPage = page.has_more ? page.next_page || null : null;
+    } while (nextPage);
+    return { data: all };
+  }
+
   private extractTotalTokens(data: any): number | null {
     // Admin API response format: { data: [{ object: "bucket", results: [{ n_generated_tokens_total, n_context_tokens_total, ... }] }] }
     if (data.data && Array.isArray(data.data)) {
@@ -167,8 +159,8 @@ export class OpenAIAdapter implements ProviderAdapter {
       for (const bucket of data.data) {
         if (bucket.results && Array.isArray(bucket.results)) {
           for (const result of bucket.results) {
-            total += result.n_generated_tokens_total || 0;
-            total += result.n_context_tokens_total || 0;
+            total += result.output_tokens || result.n_generated_tokens_total || 0;
+            total += result.input_tokens || result.n_context_tokens_total || 0;
           }
         }
       }
@@ -186,7 +178,7 @@ export class OpenAIAdapter implements ProviderAdapter {
       for (const bucket of data.data) {
         if (bucket.results && Array.isArray(bucket.results)) {
           for (const result of bucket.results) {
-            total += result.n_context_tokens_total || 0;
+            total += result.input_tokens || result.n_context_tokens_total || 0;
           }
         }
       }
@@ -204,7 +196,7 @@ export class OpenAIAdapter implements ProviderAdapter {
       for (const bucket of data.data) {
         if (bucket.results && Array.isArray(bucket.results)) {
           for (const result of bucket.results) {
-            total += result.n_generated_tokens_total || 0;
+            total += result.output_tokens || result.n_generated_tokens_total || 0;
           }
         }
       }
@@ -222,7 +214,7 @@ export class OpenAIAdapter implements ProviderAdapter {
       for (const bucket of data.data) {
         if (bucket.results && Array.isArray(bucket.results)) {
           for (const result of bucket.results) {
-            total += result.n_cached_tokens_total || 0;
+            total += result.input_cached_tokens || result.n_cached_tokens_total || 0;
           }
         }
       }
@@ -249,12 +241,11 @@ export class OpenAIAdapter implements ProviderAdapter {
               requests: 0,
             };
             
-            existing.inputTokens += result.n_context_tokens_total || 0;
-            existing.outputTokens += result.n_generated_tokens_total || 0;
-            existing.cachedTokens += result.n_cached_tokens_total || 0;
-            existing.totalTokens += (result.n_context_tokens_total || 0) + (result.n_generated_tokens_total || 0);
-            existing.cost += result.cost || 0;
-            existing.requests += result.n_requests || 1;
+            existing.inputTokens += result.input_tokens || result.n_context_tokens_total || 0;
+            existing.outputTokens += result.output_tokens || result.n_generated_tokens_total || 0;
+            existing.cachedTokens += result.input_cached_tokens || result.n_cached_tokens_total || 0;
+            existing.totalTokens += (result.input_tokens || result.n_context_tokens_total || 0) + (result.output_tokens || result.n_generated_tokens_total || 0);
+            existing.requests += result.num_model_requests || result.n_requests || 0;
             
             modelMap.set(model, existing);
           }
@@ -272,7 +263,7 @@ export class OpenAIAdapter implements ProviderAdapter {
       for (const bucket of data.data) {
         if (bucket.results && Array.isArray(bucket.results)) {
           for (const result of bucket.results) {
-            total += result.n_requests || 1;
+            total += result.num_model_requests || result.n_requests || 0;
           }
         }
       }
@@ -287,11 +278,18 @@ export class OpenAIAdapter implements ProviderAdapter {
       for (const bucket of data.data) {
         if (bucket.results && Array.isArray(bucket.results)) {
           for (const result of bucket.results) {
-            total += result.cost || 0;
+            total += result.amount?.value || result.cost || 0;
           }
         }
       }
       return total > 0 ? total : null;
+    }
+    return null;
+  }
+
+  private extractCostCurrency(data: any): string | null {
+    for (const bucket of data.data || []) for (const result of bucket.results || []) {
+      if (typeof result.amount?.currency === "string") return result.amount.currency.toUpperCase();
     }
     return null;
   }

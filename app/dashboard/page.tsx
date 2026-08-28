@@ -116,6 +116,25 @@ async function getUserGmailStatus(userId: string) {
   };
 }
 
+async function getDeveloperHomeSummary(userId: string) {
+  const supabase = createServiceClient();
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+  const [snapshotsResult, integrationsResult, billingResult] = await Promise.all([
+    supabase.from("api_usage_snapshots").select("total_tokens, cost, currency").eq("user_id", userId).eq("sync_status", "completed").gte("period_start", monthStart),
+    supabase.from("api_integrations").select("last_sync_status").eq("user_id", userId).eq("connection_type", "automatic"),
+    supabase.from("provider_billing_events").select("id", { count: "exact", head: true }).eq("user_id", userId).gte("event_date", monthStart),
+  ]);
+  const snapshots = snapshotsResult.data || [];
+  const currencies = new Set(snapshots.map((row) => row.currency).filter(Boolean));
+  return {
+    cost: currencies.size === 1 ? snapshots.reduce((total, row) => total + Number(row.cost || 0), 0) : null,
+    currency: currencies.size === 1 ? [...currencies][0] : null,
+    tokens: snapshots.length ? snapshots.reduce((total, row) => total + Number(row.total_tokens || 0), 0) : null,
+    billingSignals: billingResult.count || 0,
+    needsAttention: (integrationsResult.data || []).filter((row) => row.last_sync_status === "failed" || row.last_sync_status === "unavailable").length,
+  };
+}
+
 function StatusBadge({ status }: { status: string }) {
   const isActive = status === "active";
   return (
@@ -221,12 +240,13 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const [subscriptions, telegramConnected, profile, gmailStatus] =
+  const [subscriptions, telegramConnected, profile, gmailStatus, developerSummary] =
     await Promise.all([
       getSubscriptions(userId),
       getTelegramConnection(userId),
       getUserProfile(userId),
       getUserGmailStatus(userId),
+      getDeveloperHomeSummary(userId),
     ]);
 
   const isPro = profile.plan === "pro";
@@ -282,12 +302,12 @@ export default async function DashboardPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-[#0a0a0a] dark:text-white">
-              Subscription Dashboard
+              Your Developer Home
             </h1>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
               {isPro
-                ? "AI receipt parsing & automated renewal reminders."
-                : "AI receipt parsing & subscription tracking. Automated reminders are a Pro feature."}
+                ? "A calm view of subscriptions, provider usage, billing signals, and reminders."
+                : "Subscription tracking with clearly labelled manual and provider data."}
             </p>
           </div>
 
@@ -310,7 +330,7 @@ export default async function DashboardPage() {
           <div className="bg-white dark:bg-[#141414] rounded-2xl border border-gray-100 dark:border-gray-800 p-5 shadow-xs">
             <div className="flex items-center justify-between text-gray-400 dark:text-gray-500 mb-2">
               <span className="text-xs font-semibold uppercase tracking-wider">
-                Est. Monthly Spend
+                API spending this month
               </span>
               <svg
                 className="w-5 h-5 text-emerald-500"
@@ -327,11 +347,10 @@ export default async function DashboardPage() {
               </svg>
             </div>
             <p className="text-2xl font-extrabold text-[#0a0a0a] dark:text-white">
-              ₹{totalMonthlySpend.toLocaleString("en-IN")}
+              {developerSummary.cost !== null ? `${developerSummary.currency} ${developerSummary.cost.toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : "Cost unavailable"}
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              {active.length} active subscription
-              {active.length === 1 ? "" : "s"}
+              {developerSummary.cost !== null ? "Provider-authoritative cost" : "No single authoritative currency total"}
             </p>
           </div>
 
@@ -339,7 +358,7 @@ export default async function DashboardPage() {
           <div className="bg-white dark:bg-[#141414] rounded-2xl border border-gray-100 dark:border-gray-800 p-5 shadow-xs">
             <div className="flex items-center justify-between text-gray-400 dark:text-gray-500 mb-2">
               <span className="text-xs font-semibold uppercase tracking-wider">
-                Tracked Services
+                API usage
               </span>
               <svg
                 className="w-5 h-5 text-blue-500"
@@ -356,11 +375,10 @@ export default async function DashboardPage() {
               </svg>
             </div>
             <p className="text-2xl font-extrabold text-[#0a0a0a] dark:text-white">
-              {active.length}{" "}
-              <span className="text-sm font-normal text-gray-400">Active</span>
+              {developerSummary.tokens !== null ? developerSummary.tokens.toLocaleString("en-IN") : "Unavailable"}
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              {cancelled.length} cancelled in history
+              {developerSummary.tokens !== null ? "tokens · Provider API" : "No authoritative usage yet"}
             </p>
           </div>
 
@@ -368,7 +386,7 @@ export default async function DashboardPage() {
           <div className="bg-white dark:bg-[#141414] rounded-2xl border border-gray-100 dark:border-gray-800 p-5 shadow-xs">
             <div className="flex items-center justify-between text-gray-400 dark:text-gray-500 mb-2">
               <span className="text-xs font-semibold uppercase tracking-wider">
-                Next Renewal
+                Upcoming renewals
               </span>
               <svg
                 className="w-5 h-5 text-purple-500"
@@ -396,7 +414,7 @@ export default async function DashboardPage() {
           <div className="bg-white dark:bg-[#141414] rounded-2xl border border-gray-100 dark:border-gray-800 p-5 shadow-xs">
             <div className="flex items-center justify-between text-gray-400 dark:text-gray-500 mb-2">
               <span className="text-xs font-semibold uppercase tracking-wider">
-                AI Forwarding Email
+                Billing alerts
               </span>
               <svg
                 className="w-5 h-5 text-emerald-500"
@@ -413,10 +431,10 @@ export default async function DashboardPage() {
               </svg>
             </div>
             <p className="text-sm font-mono font-bold text-emerald-600 dark:text-emerald-400 truncate">
-              {profile.forwardingAlias}@unsub.app
+              {developerSummary.billingSignals}
             </p>
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              Forward receipts to auto-track
+              Email billing signals this month · Needs attention: {developerSummary.needsAttention}
             </p>
           </div>
         </div>

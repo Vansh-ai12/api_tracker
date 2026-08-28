@@ -1,11 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/cron/sync-api-usage",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/cron/gmail-scan",
+      "path": "/api/cron/orchestrate",
       "schedule": "0 6 * * *"
     }
   ]
