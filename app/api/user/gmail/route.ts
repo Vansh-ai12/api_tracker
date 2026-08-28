@@ -4,6 +4,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { generateGoogleAuthUrl, revokeGoogleToken } from "@/lib/gmail-oauth";
 import { runGmailInboxScan } from "@/lib/subscription-scanner";
 import { logAuditEvent } from "@/lib/audit-logger";
+import { requireProUser } from "@/lib/plan";
 import crypto from "crypto";
 
 export async function GET() {
@@ -58,6 +59,9 @@ export async function POST(request: Request) {
     }
 
     if (action === "connect") {
+      const forbidden = await requireProUser(userId);
+      if (forbidden) return forbidden;
+
       // 1. Generate 15-minute one-time OAuth state token tied directly to this canonical user_id
       const stateToken = crypto.randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
@@ -108,6 +112,9 @@ export async function POST(request: Request) {
     }
 
     if (action === "scan") {
+      const forbidden = await requireProUser(userId);
+      if (forbidden) return forbidden;
+
       const scanResult = await runGmailInboxScan(userId);
 
       // The scanner can return an error while still returning normally.

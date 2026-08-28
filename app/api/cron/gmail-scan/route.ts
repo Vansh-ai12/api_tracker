@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { runGmailInboxScan } from "@/lib/subscription-scanner";
 import { logAuditEvent } from "@/lib/audit-logger";
+import { isProUser } from "@/lib/plan";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,27 @@ export async function GET(request: Request) {
 
     console.log(`[cron/gmail-scan] Found ${users.length} users with Gmail connected`);
 
+    // Filter to Pro users only
+    const planCache = new Map<string, boolean>();
+    const proUsers = [];
+    for (const user of users) {
+      let userIsPro = planCache.get(user.id);
+      if (userIsPro === undefined) {
+        userIsPro = await isProUser(user.id);
+        planCache.set(user.id, userIsPro);
+      }
+      if (userIsPro) {
+        proUsers.push(user);
+      }
+    }
+
+    if (proUsers.length === 0) {
+      console.log("[cron/gmail-scan] No Pro users with Gmail connected");
+      return NextResponse.json({ success: true, message: "No Pro users to scan", scanned: 0 });
+    }
+
+    console.log(`[cron/gmail-scan] Found ${proUsers.length} Pro users with Gmail connected`);
+
     let totalScanned = 0;
     let totalNew = 0;
     let totalUpdated = 0;
@@ -59,7 +81,7 @@ export async function GET(request: Request) {
 
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    for (const user of users) {
+    for (const user of proUsers) {
       // Skip if already scanned in the last 24 hours
       if (user.gmail_last_scan_at) {
         const lastScan = new Date(user.gmail_last_scan_at);

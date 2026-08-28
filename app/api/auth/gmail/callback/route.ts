@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { exchangeCodeForTokens } from "@/lib/gmail-oauth";
 import { encryptToken } from "@/lib/encryption";
 import { logAuditEvent } from "@/lib/audit-logger";
+import { isProUser } from "@/lib/plan";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -142,6 +143,26 @@ export async function GET(request: Request) {
     if (!targetUserId) {
       throw new Error(
         "No canonical user found for this Gmail OAuth request.",
+      );
+    }
+
+    // 6.5. Check if user is Pro before storing Gmail credentials
+    const userIsPro = await isProUser(targetUserId);
+    if (!userIsPro) {
+      logAuditEvent("gmail_oauth_failed", {
+        userId: targetUserId,
+        error: "Gmail integration requires Pro plan",
+      });
+      return new NextResponse(
+        renderHtmlResponse({
+          title: "Pro Feature Required",
+          heading: "⚠️ Pro Feature Required",
+          message:
+            "Gmail integration is available only on the Pro plan. Please upgrade to Pro to connect your Gmail account.",
+          botUrl,
+          success: false,
+        }),
+        { headers: { "Content-Type": "text/html" } },
       );
     }
 

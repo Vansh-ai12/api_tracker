@@ -12,9 +12,10 @@ interface GmailStatusProps {
     gmail_last_error: string | null;
     forwarding_alias: string;
   };
+  isPro: boolean;
 }
 
-export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
+export function GmailStatusCard({ initialStatus, isPro }: GmailStatusProps) {
   const [status, setStatus] = useState(initialStatus);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -119,6 +120,59 @@ export function GmailStatusCard({ initialStatus }: GmailStatusProps) {
   }
 
   const isGmail = status.gmail_connected && status.tracking_mode === "GMAIL";
+
+  // Locked state for Free users
+  if (!isPro) {
+    return (
+      <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 flex items-center justify-center shrink-0 border border-gray-200 dark:border-gray-700">
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                strokeWidth="2"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                />
+              </svg>
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="h-2 w-2 rounded-full bg-gray-400" />
+                <h3 className="font-bold text-sm text-[#0a0a0a] dark:text-white">
+                  Gmail Inbox Tracking — Pro Feature
+                </h3>
+              </div>
+
+              <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                Connect Gmail for automatic subscription receipt scanning. Free users can forward receipts to{" "}
+                <strong className="text-emerald-600 dark:text-emerald-400 font-mono">
+                  {status.forwarding_alias}@unsub.app
+                </strong>{" "}
+                for manual tracking.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              className="px-4 py-2 rounded-full bg-black dark:bg-white text-white dark:text-black hover:bg-gray-800 dark:hover:bg-gray-200 text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+            >
+              Upgrade to Pro
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-emerald-100 dark:border-emerald-900/40 bg-white dark:bg-[#141414] p-5 sm:p-6 shadow-xs">

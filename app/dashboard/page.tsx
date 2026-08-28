@@ -298,44 +298,8 @@ export default async function DashboardPage() {
         {/* Plan Upgrade / Status Banner */}
         <PlanCard initialPlan={profile.plan} />
 
-        {/* Gmail Inbox Tracking — Pro Only */}
-        {isPro ? (
-          <GmailStatusCard initialStatus={gmailStatus} />
-        ) : (
-          <section className="rounded-3xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#141414] p-6 sm:p-8 shadow-xs">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5">
-              <div className="flex items-start gap-4">
-                <div className="w-11 h-11 rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-gray-500 dark:text-gray-400">
-                  <span className="text-xl">🔒</span>
-                </div>
-
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-bold text-[#0a0a0a] dark:text-white">
-                      Gmail Inbox Tracking
-                    </h2>
-
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
-                      PRO
-                    </span>
-                  </div>
-
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                    Connect Gmail to automatically scan your inbox for
-                    subscription receipts and track renewals.
-                  </p>
-                </div>
-              </div>
-
-              <a
-                href="#plan-upgrade"
-                className="shrink-0 px-5 py-2.5 rounded-full bg-black text-white dark:bg-white dark:text-black text-sm font-semibold hover:scale-105 transition-all"
-              >
-                Upgrade to Pro
-              </a>
-            </div>
-          </section>
-        )}
+        {/* Live Gmail / Tracking Mode Status Banner */}
+        <GmailStatusCard initialStatus={gmailStatus} isPro={isPro} />
 
         {/* API & Integrations Catalog */}
         <ApiIntegrationsCard isPro={isPro} />
